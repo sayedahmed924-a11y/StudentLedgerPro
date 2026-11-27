@@ -25,6 +25,8 @@ from PyQt6.QtCore import Qt, QObject, pyqtSlot
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
+from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
+from PyQt6.QtGui import QPageLayout, QPageSize
 
 # =========================================================================
 # COPYRIGHT & INTELLECTUAL PROPERTY VERIFICATION (FULLY ENCRYPTED SIGNATURE)
@@ -316,7 +318,11 @@ class PythonBridge(QObject):
 
     @pyqtSlot()
     def requestPrint(self):
-        self.win.print_pdf()
+        self.win.print_direct()
+
+    @pyqtSlot()
+    def requestExportPDF(self):
+        self.win.export_pdf()
 
     @pyqtSlot()
     def requestDatabaseManager(self):
@@ -1132,8 +1138,29 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "فشل التصدير", f"تعذر حفظ ملف Excel:\\n{exc}")
 
-    def print_pdf(self):
-        path, _ = QFileDialog.getSaveFileName(self, "تصدير السجل كملف PDF رسمي", "StudentLedger_A4.pdf", "PDF Files (*.pdf)")
+    def print_direct(self):
+        """Open the native printer dialog and print the prepared page sheets."""
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+        printer.setPageOrientation(QPageLayout.Orientation.Landscape)
+        dialog = QPrintDialog(printer, self)
+        dialog.setWindowTitle("اختيار الطابعة وإعدادات الطباعة")
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        def on_print_finished(success):
+            if success:
+                QMessageBox.information(self, "اكتملت الطباعة", "تم إرسال الصفحات إلى الطابعة بنجاح.")
+            else:
+                QMessageBox.critical(self, "تعذرت الطباعة", "لم يتمكن محرك الطباعة من إرسال الصفحات. تحقق من الطابعة ثم حاول مرة أخرى.")
+
+        try:
+            self.browser.page().print(printer, on_print_finished)
+        except Exception as exc:
+            QMessageBox.critical(self, "خطأ الطباعة", f"تعذر بدء الطباعة:\\n{exc}")
+
+    def export_pdf(self):
+        path, _ = QFileDialog.getSaveFileName(self, "حفظ نسخة PDF من السجل", "StudentLedger_A4.pdf", "PDF Files (*.pdf)")
         if not path: return
         def on_pdf_ready(pdf_data):
             if not pdf_data:
@@ -1285,8 +1312,8 @@ class MainWindow(QMainWindow):
             <button class="custom-file-btn" onclick="pyBridge.requestOpenExcel()" style="background:#007bff; color:#fff; font-weight:bold; cursor:pointer;">📂 جلب وفحص الملف ديناميكياً</button>
         </div>
         <div class="control-item"><label>📝 العنوان:</label><input type="text" id="titleInput" value="سجل قيد الطلاب المعتمد"></div>
-        <div class="control-item"><label>🔢 الصفوف في الصفحة:</label><input type="number" id="rowsPerPageInput" value="10" min="4" max="30"></div>
-        <div class="control-item"><label>📊 الأعمدة في الصفحة:</label><input type="number" id="colsPerPageInput" value="10" min="4" max="25"></div>
+        <div class="control-item"><label>🔢 الصفوف في الصفحة:</label><input type="number" id="rowsPerPageInput" value="10" min="1" max="500"></div>
+        <div class="control-item"><label>📊 الأعمدة في الصفحة:</label><input type="number" id="colsPerPageInput" value="10" min="1" max="200"></div>
         <div class="control-item">
             <label>🔢 نظام الترقيم:</label>
             <select id="serialModeSelect">
@@ -1312,7 +1339,8 @@ class MainWindow(QMainWindow):
     </div>
     <div class="actions-bar">
         <div>
-            <button class="btn btn-success" id="btnPrint" onclick="pyBridge.requestPrint()" disabled><span>🖨️</span> طباعة / تصدير PDF</button>
+            <button class="btn btn-success" id="btnPrint" onclick="pyBridge.requestPrint()" disabled><span>🖨️</span> طباعة مباشرة</button>
+            <button class="btn" id="btnExportPDF" onclick="pyBridge.requestExportPDF()" disabled><span>📄</span> حفظ PDF</button>
             <button class="btn btn-primary" id="btnExportExcel" onclick="pyBridge.requestExportExcel('')" disabled><span>📊</span> تصدير إكسيل مُنظف</button>
             <button class="btn" id="btnDatabase" onclick="pyBridge.requestDatabaseManager()"><span>🗄️</span> قاعدة بيانات الطلاب</button>
             <button class="btn btn-primary" id="btnAcademicReports" onclick="pyBridge.requestAcademicReports()"><span>📊</span> التقارير الأكاديمية</button>
@@ -1343,6 +1371,7 @@ class MainWindow(QMainWindow):
         globalData = data;
         document.getElementById('titleInput').value = data.title;
         document.getElementById('btnPrint').disabled = false;
+        document.getElementById('btnExportPDF').disabled = false;
         document.getElementById('btnExportExcel').disabled = false;
         updateCards();
         renderDynamicLedger();
@@ -1414,6 +1443,8 @@ class MainWindow(QMainWindow):
         }}
 
         const allColumns = globalData.columns;
+        // Columns are partitioned into non-overlapping ranges. No identity or other
+        // column is repeated on subsequent horizontal pages.
         const totalColChunks = Math.ceil(allColumns.length / colsPerPage);
         const totalRowChunks = Math.ceil(filtered.length / rowsPerPage);
         let pageCounter = 1;
@@ -1438,7 +1469,10 @@ class MainWindow(QMainWindow):
 
                 const table = document.createElement('table');
                 table.className = 'ledger-table';
-                let theadHtml = `<thead><tr><th style="width: 4.5%;">م</th>`;
+                // The synthetic serial column is shown only on the first horizontal
+                // segment; subsequent segments contain only their own source columns.
+                let theadHtml = `<thead><tr>`;
+                if (cChunk === 0) theadHtml += `<th style="width: 4.5%;">م</th>`;
                 colSlice.forEach(colName => {{ theadHtml += `<th>${{escapeHtml(colName)}}</th>`; }});
                 theadHtml += `</tr></thead>`;
 
@@ -1446,7 +1480,8 @@ class MainWindow(QMainWindow):
                 studentSlice.forEach((s, idx) => {{
                     let serialNum = (serialMode === 'smart_continuous') ? ((rChunk * rowsPerPage) + idx + 1) : (idx + 1);
                     const badge = (s.errorNotes && s.errorNotes.length > 0 && cChunk === 0) ? `<span class="screen-error-badge">⚠️</span>` : '';
-                    tbodyHtml += `<tr><td style="font-weight:bold;">${{toArabicDigits(serialNum)}}</td>`;
+                    tbodyHtml += `<tr>`;
+                    if (cChunk === 0) tbodyHtml += `<td style="font-weight:bold;">${{toArabicDigits(serialNum)}}</td>`;
 
                     for (let c = 0; c < colSlice.length; c++) {{
                         const cellVal = s.cells[colStartIndex + c] || '';
