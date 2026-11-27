@@ -233,7 +233,8 @@ class StudentDatabase:
             json.dumps(student.get("cells") or [], ensure_ascii=False),
             json.dumps({k: student.get(k) for k in (
                 "hasNidError", "hasBiometricError", "hasMilitaryError",
-                "isCriticalMilitary", "hasSeatingError", "errorNotes"
+                "isCriticalMilitary", "hasSeatingError", "errorNotes",
+                "sourceSheet", "sourceRow", "sourceTable"
             )}, ensure_ascii=False),
         )
 
