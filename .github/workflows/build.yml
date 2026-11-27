@@ -3,7 +3,7 @@ name: Build StudentLedgerPro
 on:
   workflow_dispatch:
   pull_request:
-    branches: [main, phase2/arabic-ui]
+    branches: [main, phase2/arabic-ui, phase5/continuous-excel-learning]
 
 jobs:
   build:
