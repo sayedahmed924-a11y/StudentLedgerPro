@@ -92,45 +92,52 @@ def load_best_sheet(file_path: str, ontology: Dict, learned: Dict | None = None,
         book = pd.ExcelFile(file_path)
     except Exception as exc:
         raise ValueError("تعذر فتح ملف Excel. تحقق من سلامة الملف وامتداده.") from exc
-    if not book.sheet_names:
-        raise ValueError("ملف Excel لا يحتوي على أوراق عمل.")
 
-    winner = None
-    for sheet_name in book.sheet_names:
-        try:
-            preview = pd.read_excel(
-                book, sheet_name=sheet_name, header=None, dtype=str,
-                nrows=scan_rows, keep_default_na=False
-            )
-        except Exception:
-            continue
-        row_index, confidence, matches = detect_header_row(
-            preview, ontology, learned, scan_rows
-        )
-        score, _ = _header_score(preview.iloc[row_index].tolist(), ontology, learned) if not preview.empty else (0, 0)
-        candidate = (score, matches, sheet_name, row_index, confidence)
-        if winner is None or candidate[:2] > winner[:2]:
-            winner = candidate
-    if winner is None:
-        raise ValueError("لم يتمكن البرنامج من قراءة أي ورقة عمل في الملف.")
-
-    score, matches, sheet_name, header_row, confidence = winner
     try:
-        data = pd.read_excel(
-            book, sheet_name=sheet_name, header=None, dtype=str,
-            keep_default_na=False
-        )
-    except Exception as exc:
-        raise ValueError("تعذر قراءة ورقة العمل التي تحتوي على الجدول.") from exc
-    if data.empty or data.shape[1] == 0:
-        raise ValueError("ورقة العمل المحددة لا تحتوي على بيانات.")
-    metadata = {
-        "sheet_name": sheet_name,
-        "header_row": header_row,
-        "confidence": confidence,
-        "matched_fields": matches,
-        "score": score,
-        "review_required": matches < 2 or confidence < 0.35,
-        "available_sheets": list(book.sheet_names),
-    }
-    return data, sheet_name, header_row, metadata
+        if not book.sheet_names:
+            raise ValueError("ملف Excel لا يحتوي على أوراق عمل.")
+        winner = None
+        for sheet_name in book.sheet_names:
+            try:
+                preview = pd.read_excel(
+                    book, sheet_name=sheet_name, header=None, dtype=str,
+                    nrows=scan_rows, keep_default_na=False
+                )
+            except Exception:
+                continue
+            row_index, confidence, matches = detect_header_row(
+                preview, ontology, learned, scan_rows
+            )
+            score, _ = _header_score(
+                preview.iloc[row_index].tolist(), ontology, learned
+            ) if not preview.empty else (0, 0)
+            candidate = (score, matches, sheet_name, row_index, confidence)
+            if winner is None or candidate[:2] > winner[:2]:
+                winner = candidate
+
+        if winner is None:
+            raise ValueError("لم يتمكن البرنامج من قراءة أي ورقة عمل في الملف.")
+
+        score, matches, sheet_name, header_row, confidence = winner
+        try:
+            data = pd.read_excel(
+                book, sheet_name=sheet_name, header=None, dtype=str,
+                keep_default_na=False
+            )
+        except Exception as exc:
+            raise ValueError("تعذر قراءة ورقة العمل التي تحتوي على الجدول.") from exc
+        if data.empty or data.shape[1] == 0:
+            raise ValueError("ورقة العمل المحددة لا تحتوي على بيانات.")
+        metadata = {
+            "sheet_name": sheet_name,
+            "header_row": header_row,
+            "confidence": confidence,
+            "matched_fields": matches,
+            "score": score,
+            "review_required": matches < 2 or confidence < 0.35,
+            "available_sheets": list(book.sheet_names),
+        }
+        return data, sheet_name, header_row, metadata
+    finally:
+        # Release the workbook file handle before callers clean up temporary files.
+        book.close()
