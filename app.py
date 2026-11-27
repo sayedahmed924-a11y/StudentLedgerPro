@@ -58,7 +58,16 @@ def get_resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 class SmartMemoryDB:
-    def __init__(self, db_path="forensic_dynamic_ledger.db"):
+    def __init__(self, db_path=None):
+        # Keep learned experience in the user's writable profile, not beside the EXE.
+        if db_path is None:
+            root = os.environ.get("APPDATA")
+            base = os.path.join(root, "StudentLedgerPro") if root else os.path.join(os.path.expanduser("~"), ".studentledgerpro")
+            os.makedirs(base, exist_ok=True)
+            db_path = os.path.join(base, "semantic_learning.sqlite3")
+        else:
+            parent = os.path.dirname(os.path.abspath(db_path))
+            os.makedirs(parent, exist_ok=True)
         self.conn = sqlite3.connect(db_path)
         self.init_db()
 
@@ -190,7 +199,7 @@ class DynamicExcelProcessor:
         for field, spec in ONTOLOGY_RULES.items():
             aliases = self.db.get_semantic_aliases(field)
             known_headers = {normalize_txt(h): 1.0 for h in spec['headers']}
-            known_headers.update(aliases)
+            known_headers.update({normalize_txt(alias): weight for alias, weight in aliases.items()})
             for col in self.all_columns:
                 col_idx = col['idx']
                 col_name = col['norm']
