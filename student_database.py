@@ -580,6 +580,87 @@ class StudentDatabase:
                     })
         return findings
 
+
+    def list_history_periods(self) -> list[str]:
+        with self._connection() as conn:
+            rows = conn.execute("""
+                SELECT academic_period FROM student_history
+                GROUP BY academic_period ORDER BY academic_period DESC
+            """).fetchall()
+        return [str(row["academic_period"]) for row in rows]
+
+    def compare_with_reference_roster(self, current_students: list[dict[str, Any]],
+                                      reference_period: str) -> dict[str, Any]:
+        """Compare a selected current roster against one explicitly selected historical period."""
+        period = str(reference_period or "").strip()
+        if not period:
+            return {"reference_period": "", "new_students": [], "missing_students": [],
+                    "changed_students": [], "reference_count": 0, "current_count": 0}
+        current_by_id: dict[str, dict[str, Any]] = {}
+        for student in current_students:
+            nid = self._history_normalize(student.get("nationalId"))
+            code = self._history_normalize(student.get("code"))
+            identity = ("nid:" + nid) if nid else (("code:" + code) if code else "")
+            if identity:
+                current_by_id[identity] = student
+        with self._connection() as conn:
+            rows = conn.execute("""
+                SELECT identity_key,identity_type,student_name,student_code,national_id,
+                       source_file,source_sheet,source_row
+                FROM student_history
+                WHERE academic_period=?
+                ORDER BY id
+            """, (period,)).fetchall()
+        reference_by_id: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            identity = ("nid:" if row["identity_type"] == "national_id" else "code:") + row["identity_key"]
+            reference_by_id[identity] = dict(row)
+        new_students = []
+        missing_students = []
+        changed_students = []
+        for identity, student in current_by_id.items():
+            previous = reference_by_id.get(identity)
+            if previous is None:
+                new_students.append({
+                    "name": student.get("name", ""), "code": student.get("code", ""),
+                    "nationalId": student.get("nationalId", ""),
+                    "sourceFile": student.get("sourceFile", ""),
+                    "sourceSheet": student.get("sourceSheet", ""),
+                    "sourceRow": student.get("sourceRow", ""),
+                })
+            else:
+                old_code = self._history_normalize(previous.get("student_code"))
+                new_code = self._history_normalize(student.get("code"))
+                old_name = self._history_normalize(previous.get("student_name"))
+                new_name = self._history_normalize(student.get("name"))
+                if (old_code and new_code and old_code != new_code) or (old_name and new_name and old_name != new_name):
+                    changed_students.append({
+                        "old_name": previous.get("student_name", ""),
+                        "new_name": student.get("name", ""),
+                        "old_code": previous.get("student_code", ""),
+                        "new_code": student.get("code", ""),
+                        "national_id": student.get("nationalId", ""),
+                        "source_file": previous.get("source_file", ""),
+                    })
+        for identity, previous in reference_by_id.items():
+            if identity not in current_by_id:
+                missing_students.append({
+                    "name": previous.get("student_name", ""),
+                    "code": previous.get("student_code", ""),
+                    "nationalId": previous.get("national_id", ""),
+                    "source_file": previous.get("source_file", ""),
+                    "source_sheet": previous.get("source_sheet", ""),
+                    "source_row": previous.get("source_row", ""),
+                })
+        return {
+            "reference_period": period,
+            "new_students": new_students,
+            "missing_students": missing_students,
+            "changed_students": changed_students,
+            "reference_count": len(reference_by_id),
+            "current_count": len(current_by_id),
+        }
+
     def get_student_history(self, identity: str) -> list[dict[str, Any]]:
         key = self._history_normalize(identity)
         with self._connection() as conn:
