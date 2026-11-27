@@ -209,15 +209,15 @@ def profile_columns(frame: pd.DataFrame, start_row: int = 0, sample_size: int = 
         lengths = []
         for value in values:
             normalized = value.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789"))
-            compact = re.sub(r"[\\s-]", "", normalized)
+            compact = re.sub(r"[\s-]", "", normalized)
             lengths.append(len(value))
-            if re.fullmatch(r"[-+]?\\d+(?:[.,]\\d+)?", compact):
+            if re.fullmatch(r"[-+]?\d+(?:[.,]\d+)?", compact):
                 numeric += 1
-            if re.fullmatch(r"[23]\\d{13}", compact):
+            if re.fullmatch(r"[23]\d{13}", compact):
                 national_id += 1
-            if re.search(r"\\d{1,4}[/.-]\\d{1,2}[/.-]\\d{1,4}", compact):
+            if re.search(r"\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}", compact):
                 date_like += 1
-            if re.search(r"[\\u0600-\\u06FF]", value):
+            if re.search(r"[\u0600-\u06FF]", value):
                 arabic_text += 1
         profiles.append({
             "column_index": col_index,
