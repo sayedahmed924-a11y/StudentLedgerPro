@@ -4,3 +4,4 @@ xlrd>=2.0
 rapidfuzz>=3.0
 PyQt6>=6.5
 PyQt6-WebEngine>=6.5
+PyArabic>=0.6.15,<1.0
