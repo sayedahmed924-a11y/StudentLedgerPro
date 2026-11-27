@@ -133,23 +133,21 @@ class DynamicExcelProcessor:
                 r_score = ((sum(1 for value in vals if re.search(spec['regex'], str(value).split('\n')[0].strip())) / max(1, len(vals))) * 100.0) if spec.get('regex') and vals else 0.0
                 combined = (h_score * 0.5) + (r_score * 0.5)
                 if combined >= 35.0:
-                    candidates.append((combined, field, col_idx))
+                    candidates.append((combined, field, col_idx, h_score, r_score))
 
-        # A single Excel column must not be assigned to multiple semantic fields.
+        # Explain every assignment and enforce one-to-one field/column mapping.
+        from field_mapping_explainer import explain_assignments
+        self.field_mapping_summary = explain_assignments(candidates, self.all_columns)
         self.classified_fields = {field: -1 for field in ONTOLOGY_RULES}
-        assigned_fields, assigned_columns = set(), set()
         learned_now = []
-        for score, field, col_idx in sorted(candidates, reverse=True):
-            if field in assigned_fields or col_idx in assigned_columns:
-                continue
+        for field, explanation in self.field_mapping_summary["assignments"].items():
+            col_idx = explanation["column_index"]
             self.classified_fields[field] = col_idx
-            assigned_fields.add(field)
-            assigned_columns.add(col_idx)
             # Persist only high-confidence mappings; uncertain guesses are never learned.
-            if score >= 72:
+            if explanation["confidence"] == "high":
                 header_alias = self.all_columns[col_idx]['name']
-                if self.db.remember_semantic_mapping(field, header_alias, score / 100.0):
-                    learned_now.append((field, header_alias, score))
+                if self.db.remember_semantic_mapping(field, header_alias, explanation["score"] / 100.0):
+                    learned_now.append((field, header_alias, explanation["score"]))
 
         self.learning_summary = {
             "learned": len(learned_now),
@@ -421,6 +419,7 @@ class MainWindow(QMainWindow):
                         "result": result,
                         "headers": headers,
                         "profile_hints": profile_hints,
+                        "mapping_summary": processor.field_mapping_summary,
                     })
                 except Exception as file_exc:
                     failures.append(f"{os.path.basename(file_path)}: {file_exc}")
@@ -449,10 +448,21 @@ class MainWindow(QMainWindow):
                 f"مجموعات الربط بين الملفات: {linking['match_group_count']}\\n"
                 f"مجموعات بها تعارضات: {linking['conflict_count']}\\n"
                 f"سجلات تحتاج مراجعة حقول أساسية: {preview['warning_count']}\\n"
-                f"أنماط ملفات سابقة متشابهة: {sum(1 for book in workbook_results if book['profile_hints'] and book['profile_hints'][0]['similarity'] >= 0.5)}\\n\\n"
+                f"أنماط ملفات سابقة متشابهة: {sum(1 for book in workbook_results if book['profile_hints'] and book['profile_hints'][0]['similarity'] >= 0.5)}\\n"
+                f"تعيينات أعمدة تحتاج مراجعة: {sum(book['mapping_summary']['review_count'] for book in workbook_results)}\\n\\n"
                 "المطابقة تعتمد على كود الطالب أو الرقم القومي بعد توحيد الأرقام.\\n"
                 "لن يتم دمج السجلات أو حذفها تلقائياً.\\n"
             )
+            mapping_lines = []
+            for book in workbook_results:
+                for field, detail in book["mapping_summary"]["assignments"].items():
+                    if detail["review_required"]:
+                        mapping_lines.append(
+                            f"{book['file']} — {field}: {detail['header']} "
+                            f"({detail['confidence']} / {detail['score']:.0f}%) — {detail['reason']}"
+                        )
+            if mapping_lines:
+                answer_text += "\\n\\nتعيينات تحتاج مراجعة:\\n" + "\\n".join(mapping_lines[:12])
             if failures:
                 answer_text += "\\nملفات لم تُقرأ بالكامل:\\n" + "\\n".join(failures[:8])
             answer_text += "\\nهل تريد اعتماد استيراد السجلات المكتشفة؟"
