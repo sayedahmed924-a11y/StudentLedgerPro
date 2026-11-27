@@ -99,6 +99,28 @@ class StudentDatabase:
                 )
             """)
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS workbook_learning (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    profile_hash TEXT NOT NULL UNIQUE,
+                    file_extension TEXT NOT NULL DEFAULT '',
+                    sheet_name TEXT NOT NULL DEFAULT '',
+                    header_signature TEXT NOT NULL DEFAULT '',
+                    header_count INTEGER NOT NULL DEFAULT 0,
+                    confirmed_imports INTEGER NOT NULL DEFAULT 1,
+                    last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS confirmed_relationships (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    left_field TEXT NOT NULL,
+                    right_field TEXT NOT NULL,
+                    confirmation_count INTEGER NOT NULL DEFAULT 1,
+                    last_confirmed TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(left_field, right_field)
+                )
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS semantic_memory (
                     field_name TEXT NOT NULL,
                     alias TEXT NOT NULL COLLATE NOCASE,
@@ -221,6 +243,98 @@ class StudentDatabase:
                 "FROM semantic_memory"
             ).fetchone()
         return {"aliases": int(row["aliases"]), "observations": int(row["observations"])}
+
+
+    @staticmethod
+    def _profile_hash(file_extension: str, sheet_name: str, headers: list[str]) -> tuple[str, str]:
+        import hashlib
+        normalized = [str(h).strip().casefold() for h in headers if str(h).strip()]
+        signature = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+        payload = json.dumps([str(file_extension).lower(), str(sheet_name).casefold(), normalized],
+                             ensure_ascii=False, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest(), signature
+
+    def remember_workbook_profile(self, file_extension: str, sheet_name: str,
+                                  headers: list[str]) -> bool:
+        """Remember structural metadata only after a user-approved import."""
+        clean_headers = [str(h).strip() for h in headers if str(h).strip()]
+        if not clean_headers:
+            return False
+        profile_hash, signature = self._profile_hash(file_extension, sheet_name, clean_headers)
+        with self._connection() as conn:
+            conn.execute("""
+                INSERT INTO workbook_learning
+                    (profile_hash,file_extension,sheet_name,header_signature,header_count)
+                VALUES (?,?,?,?,?)
+                ON CONFLICT(profile_hash) DO UPDATE SET
+                    confirmed_imports=confirmed_imports+1,
+                    last_seen=CURRENT_TIMESTAMP
+            """, (profile_hash, str(file_extension).lower(), str(sheet_name),
+                  signature, len(clean_headers)))
+        return True
+
+    def find_similar_workbook_profiles(self, file_extension: str,
+                                       headers: list[str], limit: int = 5) -> list[dict[str, Any]]:
+        """Return prior approved workbook profiles with matching extension and header overlap."""
+        current = {str(h).strip().casefold() for h in headers if str(h).strip()}
+        if not current:
+            return []
+        with self._connection() as conn:
+            rows = conn.execute("""
+                SELECT file_extension,sheet_name,header_signature,header_count,
+                       confirmed_imports,last_seen
+                FROM workbook_learning
+                WHERE file_extension=? ORDER BY confirmed_imports DESC,last_seen DESC
+                LIMIT ?
+            """, (str(file_extension).lower(), max(1, min(int(limit), 20)))).fetchall()
+        results = []
+        for row in rows:
+            try:
+                previous = set(json.loads(row["header_signature"]))
+            except (TypeError, ValueError):
+                previous = set()
+            union = current | previous
+            similarity = len(current & previous) / len(union) if union else 0.0
+            results.append({
+                "sheet_name": row["sheet_name"],
+                "similarity": round(similarity, 3),
+                "confirmed_imports": int(row["confirmed_imports"]),
+                "last_seen": row["last_seen"],
+            })
+        return sorted(results, key=lambda item: (item["similarity"], item["confirmed_imports"]),
+                      reverse=True)
+
+    def workbook_learning_stats(self) -> dict[str, int]:
+        with self._connection() as conn:
+            row = conn.execute("""
+                SELECT COUNT(*) AS profiles,
+                       COALESCE(SUM(confirmed_imports),0) AS confirmations
+                FROM workbook_learning
+            """).fetchone()
+        return {"profiles": int(row["profiles"]), "confirmations": int(row["confirmations"])}
+
+    def remember_confirmed_relationship(self, left_field: str, right_field: str) -> bool:
+        left, right = str(left_field).strip(), str(right_field).strip()
+        if not left or not right or left == right:
+            return False
+        if right < left:
+            left, right = right, left
+        with self._connection() as conn:
+            conn.execute("""
+                INSERT INTO confirmed_relationships(left_field,right_field)
+                VALUES (?,?)
+                ON CONFLICT(left_field,right_field) DO UPDATE SET
+                    confirmation_count=confirmation_count+1,
+                    last_confirmed=CURRENT_TIMESTAMP
+            """, (left, right))
+        return True
+
+    def confirmed_relationships(self) -> list[dict[str, Any]]:
+        with self._connection() as conn:
+            return [dict(row) for row in conn.execute("""
+                SELECT left_field,right_field,confirmation_count,last_confirmed
+                FROM confirmed_relationships ORDER BY confirmation_count DESC
+            """).fetchall()]
 
     @staticmethod
     def _student_values(student: dict[str, Any], source_file: str = ""):
