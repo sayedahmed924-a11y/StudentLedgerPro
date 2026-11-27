@@ -8,7 +8,6 @@ import sys
 import os
 import re
 import json
-import sqlite3
 import datetime
 import base64
 import hashlib
@@ -55,28 +54,6 @@ def get_resource_path(relative_path):
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
-
-class SmartMemoryDB:
-    def __init__(self, db_path="forensic_dynamic_ledger.db"):
-        self.conn = sqlite3.connect(db_path)
-        self.init_db()
-
-    def init_db(self):
-        with self.conn:
-            self.conn.execute("""
-                CREATE TABLE IF NOT EXISTS semantic_memory (
-                    field_name TEXT,
-                    alias TEXT,
-                    confidence REAL DEFAULT 1.0,
-                    success_count INTEGER DEFAULT 1,
-                    PRIMARY KEY (field_name, alias)
-                )
-            """)
-
-    def get_semantic_aliases(self, field):
-        cur = self.conn.cursor()
-        cur.execute("SELECT alias, confidence FROM semantic_memory WHERE field_name = ?", (field,))
-        return dict(cur.fetchall())
 
 EXPLICIT_FEMALE_NAMES = {
     'فاطمة', 'فاطمه', 'سارة', 'ساره', 'مريم', 'ايه', 'آية', 'نورهان', 'رغد', 'شهد',
@@ -340,7 +317,6 @@ class MainWindow(QMainWindow):
             Qt.WindowType.WindowCloseButtonHint
         )
 
-        self.db = SmartMemoryDB()
         self.student_db = StudentDatabase()
         self.current_user = self._authenticate_startup()
         self.current_data = None
