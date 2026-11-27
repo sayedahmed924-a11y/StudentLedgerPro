@@ -430,6 +430,66 @@ class MainWindow(QMainWindow):
             font-weight: bold;
         }}
 
+        /* Phase 2: clearer Arabic interface and responsive controls */
+        body {{ background: #eef2f7; color: #243247; }}
+        .controls-panel {{
+            background: #ffffff; border: 1px solid #dbe3ed; border-radius: 14px;
+            box-shadow: 0 8px 28px rgba(31, 48, 73, .09); padding: 20px;
+        }}
+        .app-header {{
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 12px; padding: 2px 2px 16px; margin-bottom: 16px;
+            border-bottom: 1px solid #e8edf3;
+        }}
+        .app-brand {{ display: flex; flex-direction: column; gap: 4px; }}
+        .app-brand h1 {{ margin: 0; color: #183b63; font-size: 21px; }}
+        .app-brand p {{ margin: 0; color: #718096; font-size: 12px; }}
+        .app-version {{
+            background: #eaf2fb; color: #245b91; border: 1px solid #d5e5f5;
+            padding: 6px 10px; border-radius: 20px; font-size: 11px; font-weight: bold;
+            white-space: nowrap;
+        }}
+        .controls-grid {{ gap: 14px; }}
+        .control-item {{ min-width: 0; }}
+        label {{ color: #34445b; font-size: 12px; margin-bottom: 2px; }}
+        input:not([type="checkbox"]), select, button.custom-file-btn {{
+            min-height: 40px; width: 100%; background: #fff; border: 1px solid #cbd5e1;
+            border-radius: 8px; color: #26364b; transition: border-color .15s, box-shadow .15s;
+        }}
+        input:focus, select:focus {{
+            border-color: #3982c8; box-shadow: 0 0 0 3px rgba(57,130,200,.13);
+        }}
+        button.custom-file-btn {{ background: #1769aa !important; border: 0; }}
+        button.custom-file-btn:hover {{ background: #12578e !important; }}
+        .assistant-card {{
+            background: #fff; border-radius: 10px; padding: 11px 13px;
+            box-shadow: 0 2px 7px rgba(31,48,73,.05); transition: transform .15s, box-shadow .15s;
+        }}
+        .assistant-card:hover {{ transform: translateY(-2px); box-shadow: 0 5px 13px rgba(31,48,73,.10); }}
+        .actions-bar {{ gap: 10px; }}
+        .btn {{ min-height: 38px; border-radius: 8px; padding: 9px 15px; }}
+        #pagesContainer {{ width: 100%; overflow-x: auto; padding-bottom: 12px; }}
+        .page-sheet {{ border: 1px solid #e0e6ee; border-radius: 3px; }}
+
+        @media screen and (max-width: 760px) {{
+            body {{ padding: 8px; }}
+            .controls-panel {{ padding: 13px; border-radius: 11px; }}
+            .app-header {{ align-items: flex-start; }}
+            .app-brand h1 {{ font-size: 18px; }}
+            .controls-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }}
+            .control-item {{ min-width: 0; }}
+            .assistant-cards-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+            .actions-bar {{ justify-content: flex-start; }}
+            .btn {{ flex: 1 1 135px; justify-content: center; }}
+            #pagesContainer {{ align-items: flex-start; }}
+            .page-sheet {{ min-width: 900px; }}
+        }}
+        @media screen and (max-width: 390px) {{
+            .controls-grid {{ grid-template-columns: 1fr; }}
+            .assistant-cards-grid {{ grid-template-columns: 1fr 1fr; }}
+            .app-version {{ font-size: 10px; padding: 5px 7px; }}
+        }}
+
         @page {{ size: A4 landscape; margin: 8mm 10mm; }}
         @media print {{
             html, body {{ background: white !important; margin: 0 !important; padding: 0 !important; }}
@@ -441,6 +501,13 @@ class MainWindow(QMainWindow):
 </head>
 <body>
 <div class="controls-panel">
+    <header class="app-header">
+        <div class="app-brand">
+            <h1>StudentLedgerPro</h1>
+            <p>منظومة سجل قيد الطلاب والتدقيق الذكي</p>
+        </div>
+        <span class="app-version">الإصدار المكتبي</span>
+    </header>
     <div class="controls-grid">
         <div class="control-item">
             <label>📂 ملف Excel:</label>
