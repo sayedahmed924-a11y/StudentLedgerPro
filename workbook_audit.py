@@ -20,6 +20,7 @@ def audit_workbooks(workbooks: Iterable[dict[str, Any]]) -> dict[str, Any]:
     Expected workbook shape: {file, sheet, students:[{name, code, nationalId, ...}]}.
     Optional sourceRow is preserved when supplied by the importer.
     """
+    workbooks = list(workbooks)
     records = []
     for book in workbooks:
         for index, student in enumerate(book.get("students", []), start=1):
@@ -66,7 +67,7 @@ def audit_workbooks(workbooks: Iterable[dict[str, Any]]) -> dict[str, Any]:
 
     for key, indices in code_index.items():
         if len(indices) > 1:
-            sources = {(records[i]["file"], records[i]["sheet"], str(records[i]["row"])) for i in indices}
+            sources = {(records[i]["file"], records[i]["sheet"]) for i in indices}
             if len(sources) < len(indices):
                 add("duplicate_student_code", "error",
                     f"كود الطالب مكرر داخل مصدر واحد: {key}", indices, "code")
@@ -95,7 +96,7 @@ def audit_workbooks(workbooks: Iterable[dict[str, Any]]) -> dict[str, Any]:
     counts = {level: sum(1 for item in findings if item["severity"] == level)
               for level in ("error", "warning", "info")}
     return {
-        "workbook_count": len(list(workbooks)) if not isinstance(workbooks, list) else len(workbooks),
+        "workbook_count": len(workbooks),
         "record_count": len(records),
         "finding_count": len(findings),
         "severity_counts": counts,
