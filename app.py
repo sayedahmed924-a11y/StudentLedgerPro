@@ -119,26 +119,44 @@ class DynamicExcelProcessor:
     def __init__(self, file_path, db):
         self.file_path = file_path
         self.db = db
-        self.df = pd.read_excel(file_path, header=None, dtype=str)
+        # Disable costly default NA-token scanning and cache rows for fast iteration.
+        self.df = pd.read_excel(
+            file_path, header=None, dtype=str, keep_default_na=False,
+            na_filter=False
+        )
         if self.df.empty or self.df.shape[1] == 0:
             raise ValueError("ملف Excel لا يحتوي على بيانات قابلة للقراءة.")
+        self._rows = self.df.values.tolist()
+        self._row_count = len(self._rows)
         self.header_row = 0
         self.classified_fields = {}
         self.all_columns = []
 
     def classify_and_audit(self):
         best_row, max_score = 0, -1
-        for r in range(min(15, len(self.df))):
-            row_vals = [normalize_txt(str(x)) for x in self.df.iloc[r].dropna().tolist()]
-            score = sum(2 for val in row_vals for f, spec in ONTOLOGY_RULES.items() if any(fuzz.partial_ratio(val, normalize_txt(h)) > 80 for h in spec['headers']))
+        normalized_aliases = {
+            field: [normalize_txt(h) for h in spec['headers']]
+            for field, spec in ONTOLOGY_RULES.items()
+        }
+        for r in range(min(15, self._row_count)):
+            row_vals = [normalize_txt(x) for x in self._rows[r] if x != ""]
+            score = 0
+            for val in row_vals:
+                for field in ONTOLOGY_RULES:
+                    if any(fuzz.partial_ratio(val, alias) > 80
+                           for alias in normalized_aliases[field]):
+                        score += 2
             if score > max_score:
                 max_score, best_row = score, r
 
         self.header_row = best_row
-        raw_headers = self.df.iloc[self.header_row].tolist()
-        self.all_columns = [{'idx': c, 'name': str(h).strip() if pd.notna(h) else f"عمود_{c+1}", 'norm': normalize_txt(str(h))} for c, h in enumerate(raw_headers)]
-
-        sample_df = self.df.iloc[self.header_row + 1 : self.header_row + 80]
+        raw_headers = self._rows[self.header_row]
+        self.all_columns = [
+            {'idx': c, 'name': str(h).strip() if h != "" else f"عمود_{c+1}",
+             'norm': normalize_txt(h)}
+            for c, h in enumerate(raw_headers)
+        ]
+        sample_rows = self._rows[self.header_row + 1 : self.header_row + 80]
         candidates = []
         for field, spec in ONTOLOGY_RULES.items():
             aliases = self.db.get_semantic_aliases(field)
@@ -147,9 +165,21 @@ class DynamicExcelProcessor:
             for col in self.all_columns:
                 col_idx = col['idx']
                 col_name = col['norm']
-                vals = sample_df.iloc[:, col_idx].dropna().apply(to_western).tolist() if col_idx < sample_df.shape[1] else []
-                h_score = max([max(fuzz.ratio(col_name, kh), fuzz.partial_ratio(col_name, kh)) * weight for kh, weight in known_headers.items()] or [0])
-                r_score = ((sum(1 for value in vals if re.search(spec['regex'], str(value).split('\n')[0].strip())) / max(1, len(vals))) * 100.0) if spec.get('regex') and vals else 0.0
+                vals = [
+                    to_western(row[col_idx]) for row in sample_rows
+                    if col_idx < len(row) and row[col_idx] != ""
+                ]
+                h_score = max(
+                    (max(fuzz.ratio(col_name, kh), fuzz.partial_ratio(col_name, kh)) * weight
+                     for kh, weight in known_headers.items()),
+                    default=0
+                )
+                pattern = re.compile(spec['regex']) if spec.get('regex') else None
+                r_score = (
+                    sum(1 for value in vals
+                        if pattern.search(str(value).split('\\n')[0].strip()))
+                    / max(1, len(vals)) * 100.0
+                ) if pattern and vals else 0.0
                 combined = (h_score * 0.5) + (r_score * 0.5)
                 if combined >= 35.0:
                     candidates.append((combined, field, col_idx))
@@ -166,7 +196,7 @@ class DynamicExcelProcessor:
 
         title = ""
         for r in range(min(self.header_row + 1, 10)):
-            r_str = " ".join([str(x) for x in self.df.iloc[r].dropna().tolist()])
+            r_str = " ".join(str(x) for x in self._rows[r] if x != "")
             if not title and any(k in r_str for k in ['المستوى', 'العام الجامع', 'شئون الطلاب', 'كشف قيد', 'بيان']):
                 title = r_str[:50]
 
@@ -175,17 +205,20 @@ class DynamicExcelProcessor:
         auto_serial = 1
         seen_nids, seen_seats = {}, {}
 
-        for r_idx in range(self.header_row + 1, len(self.df)):
-            row = self.df.iloc[r_idx]
-            row_cells = [str(row[col['idx']]).strip() if pd.notna(row[col['idx']]) else '' for col in self.all_columns]
-            if not any(row_cells): continue
+        # Cache semantic indexes once instead of resolving them for every student.
+        c_name = self.classified_fields.get('name', -1)
+        c_nid = self.classified_fields.get('nationalId', -1)
+        c_code = self.classified_fields.get('code', -1)
+        c_mil = self.classified_fields.get('militaryStatus', -1)
+        c_triple = self.classified_fields.get('tripleNo', -1)
+        c_seat = self.classified_fields.get('seatingNo', -1)
 
-            c_name = self.classified_fields.get('name', -1)
-            c_nid = self.classified_fields.get('nationalId', -1)
-            c_code = self.classified_fields.get('code', -1)
-            c_mil = self.classified_fields.get('militaryStatus', -1)
-            c_triple = self.classified_fields.get('tripleNo', -1)
-            c_seat = self.classified_fields.get('seatingNo', -1)
+        for r_idx in range(self.header_row + 1, self._row_count):
+            row = self._rows[r_idx]
+            row_cells = [str(row[col['idx']]).strip() if col['idx'] < len(row) else ''
+                         for col in self.all_columns]
+            if not any(row_cells):
+                continue
 
             name_val = row_cells[c_name] if c_name != -1 else ''
             nid_val = to_western(row_cells[c_nid]) if c_nid != -1 else ''
@@ -718,7 +751,12 @@ class MainWindow(QMainWindow):
 
     function filterByError(type) {{ activeErrorFilter = (activeErrorFilter === type) ? 'all' : type; renderDynamicLedger(); }}
 
-    document.getElementById('searchInput').addEventListener('input', renderDynamicLedger);
+    // Debounce typing to avoid rebuilding every page on each keystroke.
+    let searchRenderTimer = null;
+    document.getElementById('searchInput').addEventListener('input', function () {
+        clearTimeout(searchRenderTimer);
+        searchRenderTimer = setTimeout(renderDynamicLedger, 180);
+    });
     document.getElementById('rowsPerPageInput').addEventListener('input', renderDynamicLedger);
     document.getElementById('colsPerPageInput').addEventListener('input', renderDynamicLedger);
     document.getElementById('serialModeSelect').addEventListener('change', renderDynamicLedger);
