@@ -164,7 +164,13 @@ class DynamicExcelProcessor:
 
         self.header_row = best_row
         raw_headers = self.df.iloc[self.header_row].tolist()
-        self.all_columns = [{'idx': c, 'name': str(h).strip() if pd.notna(h) else f"عمود_{c+1}", 'norm': normalize_txt(str(h))} for c, h in enumerate(raw_headers)]
+        self.all_columns = []
+        header_counts = {}
+        for c, h in enumerate(raw_headers):
+            original_name = str(h).strip() if pd.notna(h) and str(h).strip() else f"عمود_{c+1}"
+            header_counts[original_name] = header_counts.get(original_name, 0) + 1
+            display_name = original_name if header_counts[original_name] == 1 else f"{original_name} ({header_counts[original_name]})"
+            self.all_columns.append({'idx': c, 'name': display_name, 'norm': normalize_txt(original_name)})
 
         sample_df = self.df.iloc[self.header_row + 1 : self.header_row + 80]
         for field, spec in ONTOLOGY_RULES.items():
@@ -521,6 +527,7 @@ window.addEventListener('load', function () {
         <div>
             <button class="btn btn-success" id="btnPrint" onclick="confirmPrintReview()" disabled><span>🖨️</span> مراجعة ثم طباعة</button>
             <button class="btn btn-primary" id="btnExportExcel" onclick="pyBridge.requestExportExcel('')" disabled><span>📊</span> تصدير إكسيل مُنظف</button>
+            <button class="btn btn-primary" id="btnAuditReport" onclick="showAuditReport()" disabled><span>📋</span> تقرير المراجعة</button>
         </div>
     </div>
 </div>
@@ -563,6 +570,28 @@ window.addEventListener('load', function () {
         ['code','name','nationalId','seatingNo'].forEach(field => {{ const i = Number(fields[field]); if (Number.isInteger(i) && i >= 0 && i < globalData.columns.length && !result.includes(i)) result.push(i); }});
         return result;
     }}
+    function showAuditReport() {{
+        if (!globalData) return;
+        const counts = {{}};
+        const examples = [];
+        globalData.students.forEach(student => {{
+            (student.errorNotes || []).forEach(note => {{
+                counts[note] = (counts[note] || 0) + 1;
+                if (examples.length < 80) examples.push((student.name || 'طالب غير معروف') + ': ' + note);
+            }});
+        }});
+        const sorted = Object.entries(counts).sort((a,b) => b[1] - a[1]);
+        let report = 'تقرير مراجعة StudentLedgerPro\\n========================\\n';
+        report += 'إجمالي الطلاب: ' + globalData.students.length + '\\n';
+        report += 'الأعمدة: ' + globalData.columns.length + '\\n';
+        report += 'طلاب لديهم ملاحظات: ' + (globalData.audit_summary.errors || 0) + '\\n';
+        report += 'إجمالي الملاحظات: ' + sorted.reduce((sum,item) => sum + item[1], 0) + '\\n\\n';
+        report += 'ملخص أنواع الملاحظات:\\n';
+        sorted.forEach(item => {{ report += '• ' + item[0] + ' (' + item[1] + ')\\n'; }});
+        report += '\\nتفاصيل أول 80 ملاحظة:\\n' + examples.join('\\n');
+        window.alert(report);
+    }}
+
     function confirmPrintReview() {{
         if (!globalData) return;
         const rows = Math.max(1, parseInt(document.getElementById('rowsPerPageInput').value, 10) || 10);
@@ -584,6 +613,7 @@ window.addEventListener('load', function () {
         document.getElementById('titleInput').value = data.title;
         document.getElementById('btnPrint').disabled = false;
         document.getElementById('btnExportExcel').disabled = false;
+        document.getElementById('btnAuditReport').disabled = false;
         updateCards();
         renderDynamicLedger();
     }}
