@@ -155,6 +155,101 @@ def is_repeated_header_row(values, headers, ontology: Dict) -> bool:
     semantic = _header_score(values, ontology)[1]
     return direct >= 2 or semantic >= 2
 
+
+def expand_merged_cells(file_path: str, sheet_name: str, frame: pd.DataFrame):
+    """Copy merged-cell anchor values into the covered dataframe cells.
+
+    Excel stores only the top-left value of a merged range. Expanding the value
+    in the in-memory dataframe helps multi-row headings without modifying source.
+    Unsupported formats safely return the original dataframe.
+    """
+    try:
+        from openpyxl import load_workbook
+        workbook = load_workbook(file_path, read_only=False, data_only=True)
+    except Exception:
+        return frame, 0
+    count = 0
+    try:
+        if sheet_name not in workbook.sheetnames:
+            return frame, 0
+        worksheet = workbook[sheet_name]
+        for merged_range in worksheet.merged_cells.ranges:
+            min_col, min_row, max_col, max_row = merged_range.bounds
+            if min_row > len(frame) or min_col > frame.shape[1]:
+                continue
+            anchor = worksheet.cell(min_row, min_col).value
+            if anchor is None:
+                continue
+            for row_num in range(min_row, min(max_row, len(frame)) + 1):
+                for col_num in range(min_col, min(max_col, frame.shape[1]) + 1):
+                    frame.iat[row_num - 1, col_num - 1] = str(anchor)
+            count += 1
+        return frame, count
+    finally:
+        workbook.close()
+
+
+def profile_columns(frame: pd.DataFrame, start_row: int = 0, sample_size: int = 250):
+    """Build cheap content fingerprints for columns with missing/ambiguous labels."""
+    profiles = []
+    sample = frame.iloc[start_row:start_row + sample_size]
+    for col_index in range(frame.shape[1]):
+        values = [str(v).strip() for v in sample.iloc[:, col_index].tolist()
+                  if v is not None and not pd.isna(v) and str(v).strip()]
+        total = len(values)
+        if not total:
+            profiles.append({
+                "column_index": col_index, "nonempty": 0, "numeric_ratio": 0.0,
+                "date_ratio": 0.0, "national_id_ratio": 0.0,
+                "arabic_text_ratio": 0.0, "average_length": 0.0,
+            })
+            continue
+        numeric = date_like = national_id = arabic_text = 0
+        lengths = []
+        for value in values:
+            normalized = value.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789"))
+            compact = re.sub(r"[\\s-]", "", normalized)
+            lengths.append(len(value))
+            if re.fullmatch(r"[-+]?\\d+(?:[.,]\\d+)?", compact):
+                numeric += 1
+            if re.fullmatch(r"[23]\\d{13}", compact):
+                national_id += 1
+            if re.search(r"\\d{1,4}[/.-]\\d{1,2}[/.-]\\d{1,4}", compact):
+                date_like += 1
+            if re.search(r"[\\u0600-\\u06FF]", value):
+                arabic_text += 1
+        profiles.append({
+            "column_index": col_index,
+            "nonempty": total,
+            "numeric_ratio": round(numeric / total, 3),
+            "date_ratio": round(date_like / total, 3),
+            "national_id_ratio": round(national_id / total, 3),
+            "arabic_text_ratio": round(arabic_text / total, 3),
+            "average_length": round(sum(lengths) / total, 1),
+        })
+    return profiles
+
+
+def find_ambiguous_columns(profiles, threshold: float = 0.65):
+    """Flag strong value patterns as review hints, never as automatic assignments."""
+    hints = []
+    for profile in profiles:
+        for field, key in (
+            ("nationalId", "national_id_ratio"),
+            ("numeric", "numeric_ratio"),
+            ("date", "date_ratio"),
+            ("arabicText", "arabic_text_ratio"),
+        ):
+            ratio = profile.get(key, 0.0)
+            if ratio >= threshold:
+                hints.append({
+                    "column_index": profile["column_index"],
+                    "pattern": field,
+                    "ratio": ratio,
+                    "review_only": True,
+                })
+    return hints
+
 def load_best_sheet(file_path: str, ontology: Dict, learned: Dict | None = None,
                     scan_rows: int = 60):
     """Inspect every worksheet's first rows, then load only the winning sheet fully.
@@ -202,6 +297,8 @@ def load_best_sheet(file_path: str, ontology: Dict, learned: Dict | None = None,
             raise ValueError("تعذر قراءة ورقة العمل التي تحتوي على الجدول.") from exc
         if data.empty or data.shape[1] == 0:
             raise ValueError("ورقة العمل المحددة لا تحتوي على بيانات.")
+        data, merged_ranges = expand_merged_cells(file_path, sheet_name, data)
+        profiles = profile_columns(data, header_row + header_depth)
         metadata = {
             "sheet_name": sheet_name,
             "header_row": header_row,
@@ -212,6 +309,9 @@ def load_best_sheet(file_path: str, ontology: Dict, learned: Dict | None = None,
             "review_required": matches < 2 or confidence < 0.35,
             "available_sheets": list(book.sheet_names),
             "nonempty_regions": find_nonempty_regions(data, header_row + header_depth),
+            "merged_ranges_expanded": merged_ranges,
+            "column_profiles": profiles,
+            "content_hints": find_ambiguous_columns(profiles),
         }
         return data, sheet_name, header_row, metadata
     finally:
