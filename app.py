@@ -1223,6 +1223,7 @@ class MainWindow(QMainWindow):
             <button class="btn btn-primary" id="btnExportExcel" onclick="pyBridge.requestExportExcel('')" disabled><span>📊</span> تصدير إكسيل مُنظف</button>
             <button class="btn" id="btnDatabase" onclick="pyBridge.requestDatabaseManager()"><span>🗄️</span> قاعدة بيانات الطلاب</button>
             <button class="btn btn-primary" id="btnAcademicReports" onclick="pyBridge.requestAcademicReports()"><span>📊</span> التقارير الأكاديمية</button>
+            <button class="btn" id="btnCustomReports" onclick="pyBridge.requestCustomReports()"><span>🧩</span> منشئ التقارير المخصصة</button>
         </div>
     </div>
 </div>
