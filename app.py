@@ -8,7 +8,6 @@ import sys
 import os
 import re
 import json
-import sqlite3
 import datetime
 import base64
 import hashlib
@@ -17,8 +16,11 @@ import pandas as pd
 from rapidfuzz import fuzz
 
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QFileDialog, QMessageBox
+    QApplication, QMainWindow, QFileDialog, QMessageBox, QDialog,
+    QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QPushButton,
+    QTableWidget, QTableWidgetItem, QInputDialog
 )
+from student_database import StudentDatabase
 from PyQt6.QtCore import Qt, QObject, pyqtSlot
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -52,28 +54,6 @@ def get_resource_path(relative_path):
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
-
-class SmartMemoryDB:
-    def __init__(self, db_path="forensic_dynamic_ledger.db"):
-        self.conn = sqlite3.connect(db_path)
-        self.init_db()
-
-    def init_db(self):
-        with self.conn:
-            self.conn.execute("""
-                CREATE TABLE IF NOT EXISTS semantic_memory (
-                    field_name TEXT,
-                    alias TEXT,
-                    confidence REAL DEFAULT 1.0,
-                    success_count INTEGER DEFAULT 1,
-                    PRIMARY KEY (field_name, alias)
-                )
-            """)
-
-    def get_semantic_aliases(self, field):
-        cur = self.conn.cursor()
-        cur.execute("SELECT alias, confidence FROM semantic_memory WHERE field_name = ?", (field,))
-        return dict(cur.fetchall())
 
 EXPLICIT_FEMALE_NAMES = {
     'فاطمة', 'فاطمه', 'سارة', 'ساره', 'مريم', 'ايه', 'آية', 'نورهان', 'رغد', 'شهد',
@@ -154,12 +134,23 @@ class DynamicExcelProcessor:
         # A single Excel column must not be assigned to multiple semantic fields.
         self.classified_fields = {field: -1 for field in ONTOLOGY_RULES}
         assigned_fields, assigned_columns = set(), set()
+        learned_now = []
         for score, field, col_idx in sorted(candidates, reverse=True):
             if field in assigned_fields or col_idx in assigned_columns:
                 continue
             self.classified_fields[field] = col_idx
             assigned_fields.add(field)
             assigned_columns.add(col_idx)
+            # Persist only high-confidence mappings; uncertain guesses are never learned.
+            if score >= 72:
+                header_alias = self.all_columns[col_idx]['name']
+                if self.db.remember_semantic_mapping(field, header_alias, score / 100.0):
+                    learned_now.append((field, header_alias, score))
+
+        self.learning_summary = {
+            "learned": len(learned_now),
+            "memory": self.db.semantic_memory_stats(),
+        }
 
         title = ""
         for r in range(min(self.header_row + 1, 10)):
@@ -304,6 +295,10 @@ class PythonBridge(QObject):
     def requestPrint(self):
         self.win.print_pdf()
 
+    @pyqtSlot()
+    def requestDatabaseManager(self):
+        self.win.open_database_manager()
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -322,7 +317,8 @@ class MainWindow(QMainWindow):
             Qt.WindowType.WindowCloseButtonHint
         )
 
-        self.db = SmartMemoryDB()
+        self.student_db = StudentDatabase()
+        self.current_user = self._authenticate_startup()
         self.current_data = None
 
         self.browser = QWebEngineView()
@@ -334,20 +330,201 @@ class MainWindow(QMainWindow):
         self.browser.page().setWebChannel(self.channel)
         self.browser.setHtml(self.get_html())
 
+    def _authenticate_startup(self):
+        """Create the first administrator interactively, then require login."""
+        if self.student_db.user_count() == 0:
+            QMessageBox.information(self, "إعداد أول تشغيل",
+                                    "أنشئ حساب المدير الأول. كلمة المرور لا تقل عن 8 أحرف.")
+            while True:
+                username, ok = QInputDialog.getText(self, "إنشاء المدير", "اسم المستخدم:")
+                if not ok:
+                    raise SystemExit(0)
+                password, ok = QInputDialog.getText(
+                    self, "إنشاء المدير", "كلمة المرور:",
+                    QLineEdit.EchoMode.Password
+                )
+                if not ok:
+                    raise SystemExit(0)
+                try:
+                    self.student_db.create_user(username, password, "admin")
+                    break
+                except Exception as exc:
+                    QMessageBox.warning(self, "بيانات غير صحيحة", str(exc))
+
+        while True:
+            username, ok = QInputDialog.getText(self, "تسجيل الدخول", "اسم المستخدم:")
+            if not ok:
+                raise SystemExit(0)
+            password, ok = QInputDialog.getText(
+                self, "تسجيل الدخول", "كلمة المرور:",
+                QLineEdit.EchoMode.Password
+            )
+            if not ok:
+                raise SystemExit(0)
+            user = self.student_db.authenticate(username, password)
+            if user:
+                self.student_db.log_activity(user["username"], "LOGIN", "تسجيل دخول ناجح")
+                return user
+            QMessageBox.warning(self, "فشل الدخول", "اسم المستخدم أو كلمة المرور غير صحيحة.")
+
+    def _can_edit(self):
+        return self.current_user and self.current_user["role"] in ("admin", "editor")
+
     def open_excel_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "📂 اختر ملف إكسيل الطلاب", "", "Excel Files (*.xlsx *.xls)")
         if not file_path: return
+        if not self._can_edit():
+            QMessageBox.warning(self, "صلاحية غير كافية", "استيراد الملفات والتعلم من الأعمدة متاحان للمدير والمحرر فقط.")
+            return
         try:
-            processor = DynamicExcelProcessor(file_path, self.db)
+            processor = DynamicExcelProcessor(file_path, self.student_db)
             result = processor.classify_and_audit()
             if not result.get('students'):
                 QMessageBox.warning(self, "ملف فارغ", "لم يتم العثور على سجلات طلاب في الملف المحدد.")
                 return
             self.current_data = result
+            try:
+                self.student_db.import_students(result.get("students", []), os.path.basename(file_path))
+                self.student_db.log_activity(self.current_user["username"], "IMPORT", os.path.basename(file_path))
+            except Exception as db_exc:
+                QMessageBox.warning(self, "تنبيه قاعدة البيانات",
+                                    f"تم تحميل الملف للفحص، لكن تعذر حفظ نسخة البيانات في SQLite:\\n{db_exc}")
+            learning = processor.learning_summary
+            QMessageBox.information(
+                self, "التعلم الذكي",
+                f"تم التعرف على {learning['learned']} عنوان عمود بثقة مرتفعة وحفظه.\\n"
+                f"إجمالي العناوين المتعلمة: {learning['memory']['aliases']}\\n"
+                f"مرات الاستفادة والتأكيد: {learning['memory']['observations']}"
+            )
             payload = json.dumps(result, ensure_ascii=False).replace("</", "<\\/")
             self.browser.page().runJavaScript(f"loadDynamicDataFromPython({payload});")
         except Exception as exc:
             QMessageBox.critical(self, "تعذر قراءة الملف", f"حدث خطأ أثناء قراءة ملف Excel:\n{exc}")
+
+    def open_database_manager(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("إدارة قاعدة بيانات الطلاب")
+        dialog.resize(850, 520)
+        layout = QVBoxLayout(dialog)
+
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("بحث بالاسم أو الكود أو الرقم القومي:"))
+        search = QLineEdit()
+        search.setPlaceholderText("اكتب كلمة البحث...")
+        search_row.addWidget(search)
+        layout.addLayout(search_row)
+
+        table = QTableWidget(0, 5)
+        table.setHorizontalHeaderLabels(["المعرف", "اسم الطالب", "كود الطالب", "الرقم القومي", "وافد"])
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(table)
+
+        def refresh():
+            records = self.student_db.search_students(search.text(), limit=5000)
+            table.setRowCount(len(records))
+            for row_index, record in enumerate(records):
+                values = [record["id"], record["name"], record["student_code"],
+                          record["national_id"], "نعم" if record["is_expat"] else "لا"]
+                for col_index, value in enumerate(values):
+                    table.setItem(row_index, col_index, QTableWidgetItem(str(value)))
+
+        def selected_id():
+            row = table.currentRow()
+            if row < 0:
+                QMessageBox.information(dialog, "اختيار طالب", "اختر طالباً من الجدول أولاً.")
+                return None
+            return int(table.item(row, 0).text())
+
+        def add_record():
+            if not self._can_edit():
+                QMessageBox.warning(dialog, "صلاحية غير كافية", "لا تملك صلاحية إضافة السجلات.")
+                return
+            name, ok = QInputDialog.getText(dialog, "إضافة طالب", "اسم الطالب:")
+            if not ok:
+                return
+            code, ok = QInputDialog.getText(dialog, "إضافة طالب", "كود الطالب:")
+            if not ok:
+                return
+            nid, ok = QInputDialog.getText(dialog, "إضافة طالب", "الرقم القومي أو رقم الجواز:")
+            if not ok:
+                return
+            try:
+                self.student_db.add_student(name, code, nid)
+                self.student_db.log_activity(self.current_user["username"], "ADD_STUDENT", code)
+                refresh()
+            except Exception as exc:
+                QMessageBox.critical(dialog, "تعذر الإضافة", str(exc))
+
+        def edit_record():
+            if not self._can_edit():
+                QMessageBox.warning(dialog, "صلاحية غير كافية", "لا تملك صلاحية تعديل السجلات.")
+                return
+            student_id = selected_id()
+            if student_id is None:
+                return
+            record = next((r for r in self.student_db.search_students("", 5000)
+                           if r["id"] == student_id), None)
+            if not record:
+                return
+            name, ok = QInputDialog.getText(dialog, "تعديل طالب", "اسم الطالب:", text=record["name"])
+            if not ok:
+                return
+            code, ok = QInputDialog.getText(dialog, "تعديل طالب", "كود الطالب:", text=record["student_code"])
+            if not ok:
+                return
+            nid, ok = QInputDialog.getText(dialog, "تعديل طالب", "الرقم القومي أو رقم الجواز:", text=record["national_id"])
+            if not ok:
+                return
+            try:
+                self.student_db.update_student(student_id, name=name, student_code=code, national_id=nid)
+                self.student_db.log_activity(self.current_user["username"], "EDIT_STUDENT", str(student_id))
+                refresh()
+            except Exception as exc:
+                QMessageBox.critical(dialog, "تعذر التعديل", str(exc))
+
+        def delete_record():
+            if self.current_user["role"] != "admin":
+                QMessageBox.warning(dialog, "صلاحية غير كافية", "حذف السجلات متاح للمدير فقط.")
+                return
+            student_id = selected_id()
+            if student_id is None:
+                return
+            answer = QMessageBox.question(dialog, "تأكيد الحذف",
+                                          "هل تريد حذف الطالب المحدد نهائياً؟")
+            if answer == QMessageBox.StandardButton.Yes:
+                self.student_db.delete_student(student_id)
+                self.student_db.log_activity(self.current_user["username"], "DELETE_STUDENT", str(student_id))
+                refresh()
+
+        def backup_database():
+            path, _ = QFileDialog.getSaveFileName(dialog, "حفظ نسخة احتياطية",
+                                                  "StudentLedger_Backup.sqlite3",
+                                                  "SQLite Database (*.sqlite3)")
+            if path:
+                try:
+                    self.student_db.backup(path)
+                    QMessageBox.information(dialog, "تم النسخ الاحتياطي", "تم إنشاء النسخة الاحتياطية بنجاح.")
+                except Exception as exc:
+                    QMessageBox.critical(dialog, "فشل النسخ الاحتياطي", str(exc))
+
+        search.textChanged.connect(refresh)
+        buttons = QHBoxLayout()
+        actions = []
+        if self._can_edit():
+            actions.extend((("إضافة طالب", add_record), ("تعديل المحدد", edit_record)))
+        if self.current_user["role"] == "admin":
+            actions.append(("حذف المحدد", delete_record))
+        actions.append(("نسخ احتياطي", backup_database))
+        for caption, callback in actions:
+            button = QPushButton(caption)
+            button.clicked.connect(callback)
+            buttons.addWidget(button)
+        layout.addLayout(buttons)
+        refresh()
+        dialog.exec()
 
     def export_clean_excel(self):
         if not self.current_data: return
@@ -543,6 +720,7 @@ class MainWindow(QMainWindow):
         <div>
             <button class="btn btn-success" id="btnPrint" onclick="pyBridge.requestPrint()" disabled><span>🖨️</span> طباعة / تصدير PDF</button>
             <button class="btn btn-primary" id="btnExportExcel" onclick="pyBridge.requestExportExcel('')" disabled><span>📊</span> تصدير إكسيل مُنظف</button>
+            <button class="btn" id="btnDatabase" onclick="pyBridge.requestDatabaseManager()"><span>🗄️</span> قاعدة بيانات الطلاب</button>
         </div>
     </div>
 </div>
