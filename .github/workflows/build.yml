@@ -3,7 +3,7 @@ name: Build StudentLedgerPro
 on:
   workflow_dispatch:
   pull_request:
-    branches: [main]
+    branches: [main, phase2/arabic-ui, phase5/continuous-excel-learning, phase6/adaptive-excel-engine]
 
 jobs:
   build:
@@ -26,6 +26,10 @@ jobs:
     - name: Check Python Syntax
       run: |
         python -m py_compile app.py
+
+    - name: Run SQLite Database Tests
+      run: |
+        python -m unittest discover -s tests -v
 
     - name: Build Application with PyInstaller
       run: |
