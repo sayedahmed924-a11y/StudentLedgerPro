@@ -110,10 +110,16 @@ class DynamicExcelProcessor:
     def classify_and_audit(self):
         # Header row and worksheet are selected by the adaptive workbook scanner.
         best_row = self.header_row
-        raw_headers = self.df.iloc[self.header_row].tolist()
-        self.all_columns = [{'idx': c, 'name': str(h).strip() if pd.notna(h) else f"عمود_{c+1}", 'norm': normalize_txt(str(h))} for c, h in enumerate(raw_headers)]
+        from excel_intelligence import compose_header_values, is_repeated_header_row
+        header_depth = int(self.detection.get("header_depth", 1))
+        raw_headers = compose_header_values(self.df, self.header_row, header_depth)
+        self.all_columns = [
+            {'idx': c, 'name': str(h).strip() if str(h).strip() else f"عمود_{c+1}",
+             'norm': normalize_txt(str(h))}
+            for c, h in enumerate(raw_headers)
+        ]
 
-        sample_df = self.df.iloc[self.header_row + 1 : self.header_row + 80]
+        sample_df = self.df.iloc[self.header_row + header_depth : self.header_row + header_depth + 80]
         candidates = []
         for field, spec in ONTOLOGY_RULES.items():
             aliases = self.db.get_semantic_aliases(field)
@@ -161,10 +167,14 @@ class DynamicExcelProcessor:
         auto_serial = 1
         seen_nids, seen_seats = {}, {}
 
-        for r_idx in range(self.header_row + 1, len(self.df)):
+        for r_idx in range(self.header_row + header_depth, len(self.df)):
             row = self.df.iloc[r_idx]
             row_cells = [str(row[col['idx']]).strip() if pd.notna(row[col['idx']]) else '' for col in self.all_columns]
-            if not any(row_cells): continue
+            if not any(row_cells):
+                continue
+            # Repeated headings between page breaks are not student records.
+            if is_repeated_header_row(row_cells, [c['name'] for c in self.all_columns], ONTOLOGY_RULES):
+                continue
 
             c_name = self.classified_fields.get('name', -1)
             c_nid = self.classified_fields.get('nationalId', -1)
