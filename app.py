@@ -355,14 +355,27 @@ class MainWindow(QMainWindow):
         if not path: return
         cols = ['م'] + self.current_data['columns'] + ['ملاحظات التدقيق الجنائي']
         rows = [[s['serial']] + s['cells'] + [" | ".join(s['errorNotes'])] for s in self.current_data['students']]
-        pd.DataFrame(rows, columns=cols).to_excel(path, index=False)
-        QMessageBox.information(self, "تم التصدير", "تم تصدير ملف الإكسيل بنجاح!")
+        try:
+            pd.DataFrame(rows, columns=cols).to_excel(path, index=False)
+            QMessageBox.information(self, "تم التصدير", "تم تصدير ملف الإكسيل بنجاح!")
+        except Exception as exc:
+            QMessageBox.critical(self, "فشل التصدير", f"تعذر حفظ ملف Excel:\\n{exc}")
 
     def print_pdf(self):
         path, _ = QFileDialog.getSaveFileName(self, "تصدير السجل كملف PDF رسمي", "StudentLedger_A4.pdf", "PDF Files (*.pdf)")
         if not path: return
-        self.browser.page().printToPdf(path)
-        QMessageBox.information(self, "تم الحفظ", "تم إصدار ملف PDF دفتري متقابل ومجهز للطباعة المزدوجة!")
+        def on_pdf_ready(pdf_data):
+            if not pdf_data:
+                QMessageBox.critical(self, "فشل الطباعة", "لم يتم إنشاء ملف PDF.")
+                return
+            try:
+                with open(path, "wb") as pdf_file:
+                    pdf_file.write(pdf_data)
+                QMessageBox.information(self, "تم الحفظ", "تم حفظ ملف PDF بنجاح.")
+            except OSError as exc:
+                QMessageBox.critical(self, "فشل الحفظ", f"تعذر حفظ ملف PDF:\\n{exc}")
+
+        self.browser.page().printToPdf(on_pdf_ready)
 
     def get_html(self):
         return f"""
