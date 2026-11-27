@@ -9,6 +9,7 @@ from openpyxl import Workbook
 from excel_intelligence import (
     expand_merged_cells,
     find_ambiguous_columns,
+    load_best_sheet,
     profile_columns,
 )
 
@@ -26,6 +27,30 @@ class ExcelContentProfileTests(unittest.TestCase):
         self.assertEqual(profiles[1]["arabic_text_ratio"], 1.0)
         hints = find_ambiguous_columns(profiles)
         self.assertTrue(any(h["column_index"] == 0 and h["pattern"] == "nationalId" for h in hints))
+
+    def test_load_best_sheet_uses_merged_header_labels(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "merged_students.xlsx")
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "بيانات"
+            sheet.merge_cells("A1:B1")
+            sheet["A1"] = "بيانات الطالب"
+            sheet["A2"] = "الاسم"
+            sheet["B2"] = "الرقم القومي"
+            sheet["A3"] = "أحمد محمد علي"
+            sheet["B3"] = "30101011234567"
+            workbook.save(path)
+            workbook.close()
+            ontology = {
+                "name": {"headers": ["الاسم", "اسم الطالب"]},
+                "nationalId": {"headers": ["الرقم القومي"]},
+            }
+            data, name, header, info = load_best_sheet(path, ontology)
+            self.assertEqual(name, "بيانات")
+            self.assertEqual(header, 1)
+            self.assertGreaterEqual(info["matched_fields"], 2)
+            self.assertGreaterEqual(info["merged_ranges_expanded"], 1)
 
     def test_expands_merged_header_cells_without_changing_source(self):
         with tempfile.TemporaryDirectory() as directory:
