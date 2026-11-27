@@ -117,6 +117,8 @@ class DynamicExcelProcessor:
         self.file_path = file_path
         self.db = db
         self.df = pd.read_excel(file_path, header=None, dtype=str)
+        if self.df.empty or self.df.shape[1] == 0:
+            raise ValueError("ملف Excel لا يحتوي على بيانات قابلة للقراءة.")
         self.header_row = 0
         self.classified_fields = {}
         self.all_columns = []
@@ -134,22 +136,30 @@ class DynamicExcelProcessor:
         self.all_columns = [{'idx': c, 'name': str(h).strip() if pd.notna(h) else f"عمود_{c+1}", 'norm': normalize_txt(str(h))} for c, h in enumerate(raw_headers)]
 
         sample_df = self.df.iloc[self.header_row + 1 : self.header_row + 80]
+        candidates = []
         for field, spec in ONTOLOGY_RULES.items():
             aliases = self.db.get_semantic_aliases(field)
             known_headers = {normalize_txt(h): 1.0 for h in spec['headers']}
             known_headers.update(aliases)
-            best_col, best_score = -1, 0.0
-
             for col in self.all_columns:
-                c = col['idx']
+                col_idx = col['idx']
                 col_name = col['norm']
-                vals = sample_df.iloc[:, c].dropna().apply(to_western).tolist() if c < sample_df.shape[1] else []
-                h_score = max([max(fuzz.ratio(col_name, kh), fuzz.partial_ratio(col_name, kh)) * w for kh, w in known_headers.items()] or [0])
-                r_score = ((sum(1 for v in vals if re.search(spec['regex'], str(v).split('\n')[0].strip())) / max(1, len(vals))) * 100.0) if spec.get('regex') and vals else 0.0
+                vals = sample_df.iloc[:, col_idx].dropna().apply(to_western).tolist() if col_idx < sample_df.shape[1] else []
+                h_score = max([max(fuzz.ratio(col_name, kh), fuzz.partial_ratio(col_name, kh)) * weight for kh, weight in known_headers.items()] or [0])
+                r_score = ((sum(1 for value in vals if re.search(spec['regex'], str(value).split('\n')[0].strip())) / max(1, len(vals))) * 100.0) if spec.get('regex') and vals else 0.0
                 combined = (h_score * 0.5) + (r_score * 0.5)
-                if combined > best_score and combined >= 35.0:
-                    best_score, best_col = combined, c
-            self.classified_fields[field] = best_col
+                if combined >= 35.0:
+                    candidates.append((combined, field, col_idx))
+
+        # A single Excel column must not be assigned to multiple semantic fields.
+        self.classified_fields = {field: -1 for field in ONTOLOGY_RULES}
+        assigned_fields, assigned_columns = set(), set()
+        for score, field, col_idx in sorted(candidates, reverse=True):
+            if field in assigned_fields or col_idx in assigned_columns:
+                continue
+            self.classified_fields[field] = col_idx
+            assigned_fields.add(field)
+            assigned_columns.add(col_idx)
 
         title = ""
         for r in range(min(self.header_row + 1, 10)):
@@ -181,7 +191,10 @@ class DynamicExcelProcessor:
             triple_val = to_western(row_cells[c_triple]) if c_triple != -1 else ''
             seat_val = to_western(row_cells[c_seat]).replace('.0', '') if c_seat != -1 else ''
 
-            is_expat = bool(any(k in f"{mil_val} {name_val}".lower() for k in ['وافد', 'سودان', 'فلسطين', 'يمن', 'سور']) or (len(nid_val) > 0 and len(nid_val) != 14))
+            nid_header = self.all_columns[c_nid]['name'].lower() if c_nid != -1 else ''
+            explicit_expat = any(k in f"{mil_val} {name_val}".lower() for k in ['وافد', 'سودان', 'فلسطين', 'يمن', 'سور'])
+            passport_column = any(k in nid_header for k in ['جواز', 'passport'])
+            is_expat = bool(explicit_expat or (passport_column and nid_val))
 
             error_notes = []
             has_nid_error = False
@@ -237,11 +250,12 @@ class DynamicExcelProcessor:
                                     error_notes.append(f"تعارض سنة الميلاد بالثلاثي ({parts[2]}) مع القومي ({yy})")
 
             if nid_val and not is_expat:
-                if nid_val in seen_nids:
+                duplicate_key = re.sub(r'\D', '', nid_val)
+                if duplicate_key in seen_nids:
                     has_nid_error = True
-                    error_notes.append(f"الرقم القومي مكرر مع الطالب ({seen_nids[nid_val]})")
+                    error_notes.append(f"الرقم القومي مكرر مع الطالب ({seen_nids[duplicate_key]})")
                 else:
-                    seen_nids[nid_val] = name_val
+                    seen_nids[duplicate_key] = name_val
 
             if seat_val:
                 if seat_val in seen_seats:
@@ -323,10 +337,17 @@ class MainWindow(QMainWindow):
     def open_excel_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "📂 اختر ملف إكسيل الطلاب", "", "Excel Files (*.xlsx *.xls)")
         if not file_path: return
-        processor = DynamicExcelProcessor(file_path, self.db)
-        result = processor.classify_and_audit()
-        self.current_data = result
-        self.browser.page().runJavaScript(f"loadDynamicDataFromPython({json.dumps(result, ensure_ascii=False)});")
+        try:
+            processor = DynamicExcelProcessor(file_path, self.db)
+            result = processor.classify_and_audit()
+            if not result.get('students'):
+                QMessageBox.warning(self, "ملف فارغ", "لم يتم العثور على سجلات طلاب في الملف المحدد.")
+                return
+            self.current_data = result
+            payload = json.dumps(result, ensure_ascii=False).replace("</", "<\\/")
+            self.browser.page().runJavaScript(f"loadDynamicDataFromPython({payload});")
+        except Exception as exc:
+            QMessageBox.critical(self, "تعذر قراءة الملف", f"حدث خطأ أثناء قراءة ملف Excel:\n{exc}")
 
     def export_clean_excel(self):
         if not self.current_data: return
@@ -334,14 +355,27 @@ class MainWindow(QMainWindow):
         if not path: return
         cols = ['م'] + self.current_data['columns'] + ['ملاحظات التدقيق الجنائي']
         rows = [[s['serial']] + s['cells'] + [" | ".join(s['errorNotes'])] for s in self.current_data['students']]
-        pd.DataFrame(rows, columns=cols).to_excel(path, index=False)
-        QMessageBox.information(self, "تم التصدير", "تم تصدير ملف الإكسيل بنجاح!")
+        try:
+            pd.DataFrame(rows, columns=cols).to_excel(path, index=False)
+            QMessageBox.information(self, "تم التصدير", "تم تصدير ملف الإكسيل بنجاح!")
+        except Exception as exc:
+            QMessageBox.critical(self, "فشل التصدير", f"تعذر حفظ ملف Excel:\\n{exc}")
 
     def print_pdf(self):
         path, _ = QFileDialog.getSaveFileName(self, "تصدير السجل كملف PDF رسمي", "StudentLedger_A4.pdf", "PDF Files (*.pdf)")
         if not path: return
-        self.browser.page().printToPdf(path)
-        QMessageBox.information(self, "تم الحفظ", "تم إصدار ملف PDF دفتري متقابل ومجهز للطباعة المزدوجة!")
+        def on_pdf_ready(pdf_data):
+            if not pdf_data:
+                QMessageBox.critical(self, "فشل الطباعة", "لم يتم إنشاء ملف PDF.")
+                return
+            try:
+                with open(path, "wb") as pdf_file:
+                    pdf_file.write(pdf_data)
+                QMessageBox.information(self, "تم الحفظ", "تم حفظ ملف PDF بنجاح.")
+            except OSError as exc:
+                QMessageBox.critical(self, "فشل الحفظ", f"تعذر حفظ ملف PDF:\\n{exc}")
+
+        self.browser.page().printToPdf(on_pdf_ready)
 
     def get_html(self):
         return f"""
@@ -472,6 +506,10 @@ class MainWindow(QMainWindow):
         renderDynamicLedger();
     }}
 
+    function escapeHtml(value) {{
+        return String(value ?? '').replace(/[&<>"']/g, ch => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[ch]));
+    }}
+
     function toArabicDigits(str) {{
         if (!str && str !== 0) return '';
         return str.toString().replace(/\\d/g, d => '٠١٢٣٤٥٦٧٨٩'[d]);
@@ -503,7 +541,7 @@ class MainWindow(QMainWindow):
         container.innerHTML = '';
         if (!globalData) return;
 
-        const title = toArabicDigits(document.getElementById('titleInput').value);
+        const title = escapeHtml(toArabicDigits(document.getElementById('titleInput').value));
         const query = document.getElementById('searchInput').value.trim().toLowerCase();
         const rowsPerPage = parseInt(document.getElementById('rowsPerPageInput').value, 10) || 10;
         const colsPerPage = parseInt(document.getElementById('colsPerPageInput').value, 10) || 10;
@@ -559,7 +597,7 @@ class MainWindow(QMainWindow):
                 const table = document.createElement('table');
                 table.className = 'ledger-table';
                 let theadHtml = `<thead><tr><th style="width: 4.5%;">م</th>`;
-                colSlice.forEach(colName => {{ theadHtml += `<th>${{colName}}</th>`; }});
+                colSlice.forEach(colName => {{ theadHtml += `<th>${{escapeHtml(colName)}}</th>`; }});
                 theadHtml += `</tr></thead>`;
 
                 let tbodyHtml = `<tbody>`;
@@ -577,7 +615,7 @@ class MainWindow(QMainWindow):
 
                         const isNameCol = ((colStartIndex + c) === globalData.classified_fields['name']);
                         const alignStyle = isNameCol ? 'text-align:right; font-weight:bold; padding-right:5px;' : '';
-                        tbodyHtml += `<td class="${{cellClass}}" style="${{alignStyle}}">${{isNameCol ? badge : ''}}${{toArabicDigits(cellVal)}}</td>`;
+                        tbodyHtml += `<td class="${{cellClass}}" style="${{alignStyle}}">${{isNameCol ? badge : ''}}${{escapeHtml(toArabicDigits(cellVal))}}</td>`;
                     }}
                     tbodyHtml += `</tr>`;
                 }});
