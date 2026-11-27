@@ -131,6 +131,11 @@ class DynamicExcelProcessor:
             aliases = self.db.get_semantic_aliases(field)
             known_headers = {normalize_txt(h): 1.0 for h in spec['headers']}
             known_headers.update(aliases)
+            corrections = self.db.get_user_mapping_corrections(
+                field, self.file_extension, self.sheet_name
+            )
+            known_headers.update({normalize_txt(alias): confidence
+                                  for alias, confidence in corrections.items()})
             for col in self.all_columns:
                 col_idx = col['idx']
                 col_name = col['norm']
