@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 StudentLedgerPro - منظومة سجل قيد الطلاب والتدقيق الجنائي الديناميكية
+All Rights Reserved (C) 2026.
 """
 
 import sys
@@ -9,6 +10,8 @@ import re
 import json
 import sqlite3
 import datetime
+import base64
+import hashlib
 import pandas as pd
 from rapidfuzz import fuzz
 
@@ -18,6 +21,28 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QObject, pyqtSlot
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
+
+# =========================================================================
+# COPYRIGHT & INTELLECTUAL PROPERTY VERIFICATION (FULLY ENCRYPTED SIGNATURE)
+# =========================================================================
+# Encrypted Owner: "Zaghloul Sayed Zaghloul Saad"
+_CIPHER_PAYLOAD = b'WmFnaGxvdWwgU2F5ZWQgWmFnaGxvdWwgU2FhZA=='
+__OWNER_HASH__ = "d1b58bf147e4499d63dd8dc7c12663996726e6d1eb2c6fe8686e9ea37b2d2db7"
+
+def _verify_license():
+    try:
+        decoded = base64.b64decode(_CIPHER_PAYLOAD).decode('utf-8')
+        computed_hash = hashlib.sha256(decoded.encode('utf-8')).hexdigest()
+        if computed_hash != __OWNER_HASH__:
+            sys.exit(0)
+        return decoded
+    except Exception:
+        sys.exit(0)
+
+# Signature injected silently into runtime memory
+__AUTHOR__ = _verify_license()
+__COPYRIGHT__ = f"Copyright (C) 2026 {__AUTHOR__}. All Rights Reserved."
+# =========================================================================
 
 class SmartMemoryDB:
     def __init__(self, db_path="forensic_dynamic_ledger.db"):
@@ -260,6 +285,11 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("StudentLedgerPro - منظومة سجل قيد الطلاب والتدقيق الجنائي الديناميكية")
+        
+        # Injected encrypted metadata
+        self.setProperty("LegalCopyright", __COPYRIGHT__)
+        self.setProperty("Author", __AUTHOR__)
+
         self.setWindowFlags(
             Qt.WindowType.Window |
             Qt.WindowType.WindowMinMaxButtonsHint |
@@ -302,7 +332,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "تم الحفظ", "تم إصدار ملف PDF دفتري متقابل ومجهز للطباعة المزدوجة!")
 
     def get_html(self):
-        return """
+        return f"""
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -310,40 +340,58 @@ class MainWindow(QMainWindow):
     <title>StudentLedgerPro</title>
     <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
     <style>
-        * { box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; background-color: #3e4245; margin: 0; padding: 15px; direction: rtl; }
-        .controls-panel { background: #fff; padding: 16px 20px; border-radius: 8px; box-shadow: 0 5px 18px rgba(0,0,0,0.25); max-width: 1400px; margin: 0 auto 15px auto; }
-        .controls-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; align-items: end; }
-        .control-item { display: flex; flex-direction: column; gap: 4px; }
-        label { font-weight: bold; font-size: 12px; color: #2c3e50; }
-        input, select, button.custom-file-btn { padding: 7px 10px; border: 1.5px solid #bbb; border-radius: 4px; font-size: 13px; outline: none; }
-        .assistant-cards-grid { display: none; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #dee2e6; }
-        .assistant-card { background: #f8f9fa; border: 1px solid #ced4da; border-radius: 6px; padding: 7px 10px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
-        .assistant-card.alert-danger { border-right: 4px solid #dc3545; }
-        .assistant-card.alert-warning { border-right: 4px solid #ffc107; }
-        .assistant-card.alert-info { border-right: 4px solid #17a2b8; }
-        .assistant-card.alert-success { border-right: 4px solid #28a745; }
-        .actions-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #dee2e6; justify-content: space-between; }
-        .btn { border: none; padding: 8px 14px; font-size: 13px; font-weight: bold; border-radius: 4px; cursor: pointer; color: white; display: inline-flex; align-items: center; gap: 6px; }
-        .btn-success { background: #1e7e34; } .btn-primary { background: #0069d9; } .btn-danger { background: #c82333; } .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-        #pagesContainer { display: flex; flex-direction: column; gap: 25px; align-items: center; }
-        .empty-placeholder { background: #fff; padding: 50px 20px; text-align: center; border-radius: 8px; max-width: 650px; margin: 30px auto; color: #495057; }
-        .page-sheet { background: white; width: 297mm; min-height: 200mm; padding: 6mm 8mm; box-shadow: 0 0 14px rgba(0,0,0,0.3); display: flex; flex-direction: column; }
-        .page-header { text-align: center; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }
-        .page-title { font-size: 17px; font-weight: bold; margin: 0 auto; }
-        .page-tag { font-size: 11px; font-weight: bold; color: #555; border: 1px solid #aaa; padding: 2px 8px; border-radius: 4px; }
-        table.ledger-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-        table.ledger-table th, table.ledger-table td { border: 1px solid #000; padding: 2px 3px; font-size: 11px; text-align: center; height: 13.5mm; word-wrap: break-word; overflow: hidden; }
-        table.ledger-table th { background: #f2f2f2; font-weight: bold; }
-        .screen-error-badge { display: inline-block; background: #ffc9c9; color: #c92a2a; font-size: 9px; padding: 1px 4px; border-radius: 3px; font-weight: bold; }
-        .cell-has-error { background-color: #fff3bf !important; } .cell-has-danger { background-color: #ffe3e3 !important; }
-        @page { size: A4 landscape; margin: 8mm 10mm; }
-        @media print {
-            html, body { background: white !important; margin: 0 !important; padding: 0 !important; }
-            .controls-panel, .empty-placeholder, .no-print { display: none !important; }
-            .screen-error-badge, .cell-has-error, .cell-has-danger { background: transparent !important; display: none !important; }
-            .page-sheet { width: 100% !important; box-shadow: none !important; border: none !important; page-break-after: always !important; }
-        }
+        * {{ box-sizing: border-box; }}
+        body {{ font-family: Arial, sans-serif; background-color: #3e4245; margin: 0; padding: 15px; direction: rtl; display: flex; flex-direction: column; min-height: 100vh; }}
+        .controls-panel {{ background: #fff; padding: 16px 20px; border-radius: 8px; box-shadow: 0 5px 18px rgba(0,0,0,0.25); max-width: 1400px; margin: 0 auto 15px auto; width: 100%; }}
+        .controls-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; align-items: end; }}
+        .control-item {{ display: flex; flex-direction: column; gap: 4px; }}
+        label {{ font-weight: bold; font-size: 12px; color: #2c3e50; }}
+        input, select, button.custom-file-btn {{ padding: 7px 10px; border: 1.5px solid #bbb; border-radius: 4px; font-size: 13px; outline: none; }}
+        .assistant-cards-grid {{ display: none; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #dee2e6; }}
+        .assistant-card {{ background: #f8f9fa; border: 1px solid #ced4da; border-radius: 6px; padding: 7px 10px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }}
+        .assistant-card.alert-danger {{ border-right: 4px solid #dc3545; }}
+        .assistant-card.alert-warning {{ border-right: 4px solid #ffc107; }}
+        .assistant-card.alert-info {{ border-right: 4px solid #17a2b8; }}
+        .assistant-card.alert-success {{ border-right: 4px solid #28a745; }}
+        .actions-bar {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #dee2e6; justify-content: space-between; }}
+        .btn {{ border: none; padding: 8px 14px; font-size: 13px; font-weight: bold; border-radius: 4px; cursor: pointer; color: white; display: inline-flex; align-items: center; gap: 6px; }}
+        .btn-success {{ background: #1e7e34; }} .btn-primary {{ background: #0069d9; }} .btn-danger {{ background: #c82333; }} .btn:disabled {{ opacity: 0.6; cursor: not-allowed; }}
+        
+        #pagesContainer {{ display: flex; flex-direction: column; gap: 25px; align-items: center; flex: 1; }}
+        .empty-placeholder {{ background: #fff; padding: 50px 20px; text-align: center; border-radius: 8px; max-width: 650px; margin: 30px auto; color: #495057; }}
+        .page-sheet {{ background: white; width: 297mm; min-height: 200mm; padding: 6mm 8mm; box-shadow: 0 0 14px rgba(0,0,0,0.3); display: flex; flex-direction: column; }}
+        .page-header {{ text-align: center; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }}
+        .page-title {{ font-size: 17px; font-weight: bold; margin: 0 auto; }}
+        .page-tag {{ font-size: 11px; font-weight: bold; color: #555; border: 1px solid #aaa; padding: 2px 8px; border-radius: 4px; }}
+        table.ledger-table {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
+        table.ledger-table th, table.ledger-table td {{ border: 1px solid #000; padding: 2px 3px; font-size: 11px; text-align: center; height: 13.5mm; word-wrap: break-word; overflow: hidden; }}
+        table.ledger-table th {{ background: #f2f2f2; font-weight: bold; }}
+        .screen-error-badge {{ display: inline-block; background: #ffc9c9; color: #c92a2a; font-size: 9px; padding: 1px 4px; border-radius: 3px; font-weight: bold; }}
+        .cell-has-error {{ background-color: #fff3bf !important; }} .cell-has-danger {{ background-color: #ffe3e3 !important; }}
+        
+        /* تذييل الواجهة الرسمي مع إخفائه التام في الطباعة */
+        .system-footer {{
+            text-align: center;
+            padding: 12px;
+            color: #bdc3c7;
+            font-size: 11.5px;
+            letter-spacing: 0.8px;
+            margin-top: 20px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            user-select: none;
+        }}
+        .system-footer span {{
+            color: #ffffff;
+            font-weight: bold;
+        }}
+
+        @page {{ size: A4 landscape; margin: 8mm 10mm; }}
+        @media print {{
+            html, body {{ background: white !important; margin: 0 !important; padding: 0 !important; }}
+            .controls-panel, .empty-placeholder, .no-print, .system-footer {{ display: none !important; visibility: hidden !important; height: 0 !important; }}
+            .screen-error-badge, .cell-has-error, .cell-has-danger {{ background: transparent !important; display: none !important; }}
+            .page-sheet {{ width: 100% !important; box-shadow: none !important; border: none !important; page-break-after: always !important; }}
+        }}
     </style>
 </head>
 <body>
@@ -386,29 +434,40 @@ class MainWindow(QMainWindow):
         </div>
     </div>
 </div>
-<div id="pagesContainer"><div class="empty-placeholder"><h3>⚡ السجل جاهز لاستقبال أي ملف Excel ديناميكياً</h3><p>انقر فوق "جلب وفحص الملف ديناميكياً" للبدء.</p></div></div>
+
+<div id="pagesContainer">
+    <div class="empty-placeholder">
+        <h3>⚡ السجل جاهز لاستقبال أي ملف Excel ديناميكياً</h3>
+        <p>انقر فوق "جلب وفحص الملف ديناميكياً" للبدء.</p>
+    </div>
+</div>
+
+<!-- تذييل حقوق الملكية الفكرية في الواجهة فقط -->
+<div class="system-footer">
+    StudentLedgerPro &bull; Developed by <span>{__AUTHOR__}</span> &bull; All Rights Reserved &copy; 2026
+</div>
 
 <script>
     let pyBridge = null;
-    new QWebChannel(qt.webChannelTransport, function (channel) { pyBridge = channel.objects.pyBridge; });
+    new QWebChannel(qt.webChannelTransport, function (channel) {{ pyBridge = channel.objects.pyBridge; }});
     let globalData = null;
     let activeErrorFilter = 'all';
 
-    function loadDynamicDataFromPython(data) {
+    function loadDynamicDataFromPython(data) {{
         globalData = data;
         document.getElementById('titleInput').value = data.title;
         document.getElementById('btnPrint').disabled = false;
         document.getElementById('btnExportExcel').disabled = false;
         updateCards();
         renderDynamicLedger();
-    }
+    }}
 
-    function toArabicDigits(str) {
+    function toArabicDigits(str) {{
         if (!str && str !== 0) return '';
         return str.toString().replace(/\\d/g, d => '٠١٢٣٤٥٦٧٨٩'[d]);
-    }
+    }}
 
-    function updateCards() {
+    function updateCards() {{
         if (!globalData) return;
         const students = globalData.students;
         document.getElementById('cardNidErrCount').innerText = toArabicDigits(students.filter(s => s.hasNidError).length);
@@ -418,9 +477,9 @@ class MainWindow(QMainWindow):
         document.getElementById('cardExpatCount').innerText = toArabicDigits(students.filter(s => s.isExpat).length);
         document.getElementById('cardTotalCount').innerText = toArabicDigits(students.length);
         document.getElementById('assistantCardsGrid').style.display = 'grid';
-    }
+    }}
 
-    function filterByError(type) { activeErrorFilter = (activeErrorFilter === type) ? 'all' : type; renderDynamicLedger(); }
+    function filterByError(type) {{ activeErrorFilter = (activeErrorFilter === type) ? 'all' : type; renderDynamicLedger(); }}
 
     document.getElementById('searchInput').addEventListener('input', renderDynamicLedger);
     document.getElementById('rowsPerPageInput').addEventListener('input', renderDynamicLedger);
@@ -429,7 +488,7 @@ class MainWindow(QMainWindow):
     document.getElementById('titleInput').addEventListener('input', renderDynamicLedger);
     document.getElementById('blankFirstPageCheck').addEventListener('change', renderDynamicLedger);
 
-    function renderDynamicLedger() {
+    function renderDynamicLedger() {{
         const container = document.getElementById('pagesContainer');
         container.innerHTML = '';
         if (!globalData) return;
@@ -441,7 +500,7 @@ class MainWindow(QMainWindow):
         const serialMode = document.getElementById('serialModeSelect').value;
         const startBlank = document.getElementById('blankFirstPageCheck').checked;
 
-        let filtered = globalData.students.filter(s => {
+        let filtered = globalData.students.filter(s => {{
             const matchQ = !query || s.name.toLowerCase().includes(query) || s.code.includes(query) || s.nationalId.includes(query);
             let matchF = true;
             if (activeErrorFilter === 'nid_error') matchF = s.hasNidError;
@@ -450,19 +509,19 @@ class MainWindow(QMainWindow):
             else if (activeErrorFilter === 'seating_gaps') matchF = s.hasSeatingError;
             else if (activeErrorFilter === 'expat') matchF = s.isExpat;
             return matchQ && matchF;
-        });
+        }});
 
-        if (filtered.length === 0) {
+        if (filtered.length === 0) {{
             container.innerHTML = '<div style="color:#fff; padding:30px;">لا توجد نتائج تطابق خيار الفرز.</div>';
             return;
-        }
+        }}
 
-        if (startBlank) {
+        if (startBlank) {{
             const blank = document.createElement('div');
             blank.className = 'page-sheet blank-start-page';
             blank.innerHTML = '<div class="no-print" style="margin:auto; text-align:center; color:#777; border:2px dashed #aaa; padding:40px; border-radius:8px;">📄 <strong>صفحة بداية فارغة لضبط التقابل الدفتري وجه وظهر</strong></div>';
             container.appendChild(blank);
-        }
+        }}
 
         const allColumns = globalData.columns;
         const totalColChunks = Math.ceil(allColumns.length / colsPerPage);
@@ -470,36 +529,36 @@ class MainWindow(QMainWindow):
         let pageCounter = 1;
         const totalPages = totalRowChunks * totalColChunks;
 
-        for (let rChunk = 0; rChunk < totalRowChunks; rChunk++) {
+        for (let rChunk = 0; rChunk < totalRowChunks; rChunk++) {{
             const studentSlice = filtered.slice(rChunk * rowsPerPage, (rChunk + 1) * rowsPerPage);
-            for (let cChunk = 0; cChunk < totalColChunks; cChunk++) {
+            for (let cChunk = 0; cChunk < totalColChunks; cChunk++) {{
                 const colSlice = allColumns.slice(cChunk * colsPerPage, (cChunk + 1) * colsPerPage);
                 const colStartIndex = cChunk * colsPerPage;
                 const pageSheet = document.createElement('div');
                 pageSheet.className = 'page-sheet';
 
-                const partLabel = (totalColChunks > 1) ? ` (الجزء ${toArabicDigits(cChunk + 1)} من ${toArabicDigits(totalColChunks)})` : '';
+                const partLabel = (totalColChunks > 1) ? ` (الجزء ${{toArabicDigits(cChunk + 1)}} من ${{toArabicDigits(totalColChunks)}})` : '';
                 pageSheet.innerHTML = `
                     <div class="page-header">
                         <span class="page-tag">سجل ديناميكي</span>
-                        <div class="page-title">${title} ${partLabel}</div>
-                        <span class="page-tag">صفحة: ${toArabicDigits(pageCounter)} من ${toArabicDigits(totalPages)}</span>
+                        <div class="page-title">${{title}} ${{partLabel}}</div>
+                        <span class="page-tag">صفحة: ${{toArabicDigits(pageCounter)}} من ${{toArabicDigits(totalPages)}}</span>
                     </div>
                 `;
 
                 const table = document.createElement('table');
                 table.className = 'ledger-table';
                 let theadHtml = `<thead><tr><th style="width: 4.5%;">م</th>`;
-                colSlice.forEach(colName => { theadHtml += `<th>${colName}</th>`; });
+                colSlice.forEach(colName => {{ theadHtml += `<th>${{colName}}</th>`; }});
                 theadHtml += `</tr></thead>`;
 
                 let tbodyHtml = `<tbody>`;
-                studentSlice.forEach((s, idx) => {
+                studentSlice.forEach((s, idx) => {{
                     let serialNum = (serialMode === 'smart_continuous') ? ((rChunk * rowsPerPage) + idx + 1) : (idx + 1);
                     const badge = (s.errorNotes && s.errorNotes.length > 0 && cChunk === 0) ? `<span class="screen-error-badge">⚠️</span>` : '';
-                    tbodyHtml += `<tr><td style="font-weight:bold;">${toArabicDigits(serialNum)}</td>`;
+                    tbodyHtml += `<tr><td style="font-weight:bold;">${{toArabicDigits(serialNum)}}</td>`;
 
-                    for (let c = 0; c < colSlice.length; c++) {
+                    for (let c = 0; c < colSlice.length; c++) {{
                         const cellVal = s.cells[colStartIndex + c] || '';
                         let cellClass = '';
                         if (s.hasNidError && (colStartIndex + c) === globalData.classified_fields['nationalId']) cellClass = 'cell-has-danger';
@@ -508,19 +567,19 @@ class MainWindow(QMainWindow):
 
                         const isNameCol = ((colStartIndex + c) === globalData.classified_fields['name']);
                         const alignStyle = isNameCol ? 'text-align:right; font-weight:bold; padding-right:5px;' : '';
-                        tbodyHtml += `<td class="${cellClass}" style="${alignStyle}">${isNameCol ? badge : ''}${toArabicDigits(cellVal)}</td>`;
-                    }
+                        tbodyHtml += `<td class="${{cellClass}}" style="${{alignStyle}}">${{isNameCol ? badge : ''}}${{toArabicDigits(cellVal)}}</td>`;
+                    }}
                     tbodyHtml += `</tr>`;
-                });
+                }});
                 tbodyHtml += `</tbody>`;
 
                 table.innerHTML = theadHtml + tbodyHtml;
                 pageSheet.appendChild(table);
                 container.appendChild(pageSheet);
                 pageCounter++;
-            }
-        }
-    }
+            }}
+        }}
+    }}
 </script>
 </body>
 </html>
