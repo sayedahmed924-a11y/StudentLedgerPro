@@ -5,19 +5,27 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 from pathlib import Path
 from typing import Any
 
 
 def default_database_path() -> Path:
-    """Use a per-user writable data directory, never the EXE/install directory."""
-    root = os.environ.get("APPDATA")
-    if root:
-        base = Path(root) / "StudentLedgerPro"
-    else:
-        base = Path.home() / ".studentledgerpro"
-    base.mkdir(parents=True, exist_ok=True)
-    return base / "student_ledger.sqlite3"
+    """Prefer the folder beside the running EXE/source for portable deployments."""
+    app_dir = Path(os.path.dirname(os.path.abspath(
+        sys.executable if getattr(sys, "frozen", False) else __file__
+    )))
+    fallback = Path(os.environ.get("APPDATA", str(Path.home()))) / "StudentLedgerPro"
+    for base in (app_dir, fallback):
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+            probe = base / ".studentledgerpro_write_test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+            return base / "student_ledger.sqlite3"
+        except OSError:
+            continue
+    raise OSError("لا توجد صلاحية كتابة في مجلد البرنامج أو مجلد بيانات المستخدم.")
 
 
 class StudentDatabase:

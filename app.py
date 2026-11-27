@@ -57,14 +57,30 @@ def get_resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
+def get_app_data_directory():
+    """Prefer a portable writable folder beside the EXE/source; fall back safely."""
+    app_dir = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
+    candidates = [
+        app_dir,
+        os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "StudentLedgerPro"),
+    ]
+    for directory in candidates:
+        try:
+            os.makedirs(directory, exist_ok=True)
+            probe = os.path.join(directory, ".studentledgerpro_write_test")
+            with open(probe, "w", encoding="utf-8") as handle:
+                handle.write("ok")
+            os.remove(probe)
+            return directory
+        except OSError:
+            continue
+    raise OSError("لا توجد صلاحية كتابة في مجلد البرنامج أو مجلد بيانات المستخدم.")
+
+
 class SmartMemoryDB:
     def __init__(self, db_path=None):
-        # Keep learned experience in the user's writable profile, not beside the EXE.
         if db_path is None:
-            root = os.environ.get("APPDATA")
-            base = os.path.join(root, "StudentLedgerPro") if root else os.path.join(os.path.expanduser("~"), ".studentledgerpro")
-            os.makedirs(base, exist_ok=True)
-            db_path = os.path.join(base, "semantic_learning.sqlite3")
+            db_path = os.path.join(get_app_data_directory(), "semantic_learning.sqlite3")
         else:
             parent = os.path.dirname(os.path.abspath(db_path))
             os.makedirs(parent, exist_ok=True)
