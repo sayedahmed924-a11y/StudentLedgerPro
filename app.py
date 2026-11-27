@@ -157,12 +157,23 @@ class DynamicExcelProcessor:
         # A single Excel column must not be assigned to multiple semantic fields.
         self.classified_fields = {field: -1 for field in ONTOLOGY_RULES}
         assigned_fields, assigned_columns = set(), set()
+        learned_now = []
         for score, field, col_idx in sorted(candidates, reverse=True):
             if field in assigned_fields or col_idx in assigned_columns:
                 continue
             self.classified_fields[field] = col_idx
             assigned_fields.add(field)
             assigned_columns.add(col_idx)
+            # Persist only high-confidence mappings; uncertain guesses are never learned.
+            if score >= 72:
+                header_alias = self.all_columns[col_idx]['name']
+                if self.db.remember_semantic_mapping(field, header_alias, score / 100.0):
+                    learned_now.append((field, header_alias, score))
+
+        self.learning_summary = {
+            "learned": len(learned_now),
+            "memory": self.db.semantic_memory_stats(),
+        }
 
         title = ""
         for r in range(min(self.header_row + 1, 10)):
@@ -387,7 +398,7 @@ class MainWindow(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(self, "📂 اختر ملف إكسيل الطلاب", "", "Excel Files (*.xlsx *.xls)")
         if not file_path: return
         try:
-            processor = DynamicExcelProcessor(file_path, self.db)
+            processor = DynamicExcelProcessor(file_path, self.student_db)
             result = processor.classify_and_audit()
             if not result.get('students'):
                 QMessageBox.warning(self, "ملف فارغ", "لم يتم العثور على سجلات طلاب في الملف المحدد.")
@@ -402,6 +413,13 @@ class MainWindow(QMainWindow):
             except Exception as db_exc:
                 QMessageBox.warning(self, "تنبيه قاعدة البيانات",
                                     f"تم تحميل الملف للفحص، لكن تعذر حفظ نسخة البيانات في SQLite:\\n{db_exc}")
+            learning = processor.learning_summary
+            QMessageBox.information(
+                self, "التعلم الذكي",
+                f"تم التعرف على {learning['learned']} عنوان عمود بثقة مرتفعة وحفظه.\\n"
+                f"إجمالي العناوين المتعلمة: {learning['memory']['aliases']}\\n"
+                f"مرات الاستفادة والتأكيد: {learning['memory']['observations']}"
+            )
             payload = json.dumps(result, ensure_ascii=False).replace("</", "<\\/")
             self.browser.page().runJavaScript(f"loadDynamicDataFromPython({payload});")
         except Exception as exc:
