@@ -331,6 +331,7 @@ class MainWindow(QMainWindow):
 
         self.db = SmartMemoryDB()
         self.student_db = StudentDatabase()
+        self.current_user = self._authenticate_startup()
         self.current_data = None
 
         self.browser = QWebEngineView()
@@ -342,6 +343,46 @@ class MainWindow(QMainWindow):
         self.browser.page().setWebChannel(self.channel)
         self.browser.setHtml(self.get_html())
 
+    def _authenticate_startup(self):
+        """Create the first administrator interactively, then require login."""
+        if self.student_db.user_count() == 0:
+            QMessageBox.information(self, "إعداد أول تشغيل",
+                                    "أنشئ حساب المدير الأول. كلمة المرور لا تقل عن 8 أحرف.")
+            while True:
+                username, ok = QInputDialog.getText(self, "إنشاء المدير", "اسم المستخدم:")
+                if not ok:
+                    raise SystemExit(0)
+                password, ok = QInputDialog.getText(
+                    self, "إنشاء المدير", "كلمة المرور:",
+                    QLineEdit.EchoMode.Password
+                )
+                if not ok:
+                    raise SystemExit(0)
+                try:
+                    self.student_db.create_user(username, password, "admin")
+                    break
+                except Exception as exc:
+                    QMessageBox.warning(self, "بيانات غير صحيحة", str(exc))
+
+        while True:
+            username, ok = QInputDialog.getText(self, "تسجيل الدخول", "اسم المستخدم:")
+            if not ok:
+                raise SystemExit(0)
+            password, ok = QInputDialog.getText(
+                self, "تسجيل الدخول", "كلمة المرور:",
+                QLineEdit.EchoMode.Password
+            )
+            if not ok:
+                raise SystemExit(0)
+            user = self.student_db.authenticate(username, password)
+            if user:
+                self.student_db.log_activity(user["username"], "LOGIN", "تسجيل دخول ناجح")
+                return user
+            QMessageBox.warning(self, "فشل الدخول", "اسم المستخدم أو كلمة المرور غير صحيحة.")
+
+    def _can_edit(self):
+        return self.current_user and self.current_user["role"] in ("admin", "editor")
+
     def open_excel_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "📂 اختر ملف إكسيل الطلاب", "", "Excel Files (*.xlsx *.xls)")
         if not file_path: return
@@ -352,8 +393,12 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "ملف فارغ", "لم يتم العثور على سجلات طلاب في الملف المحدد.")
                 return
             self.current_data = result
+            if not self._can_edit():
+                QMessageBox.warning(self, "صلاحية غير كافية", "حسابك يسمح بالمشاهدة فقط ولا يمكنه استيراد البيانات.")
+                return
             try:
                 self.student_db.import_students(result.get("students", []), os.path.basename(file_path))
+                self.student_db.log_activity(self.current_user["username"], "IMPORT", os.path.basename(file_path))
             except Exception as db_exc:
                 QMessageBox.warning(self, "تنبيه قاعدة البيانات",
                                     f"تم تحميل الملف للفحص، لكن تعذر حفظ نسخة البيانات في SQLite:\\n{db_exc}")
