@@ -18,7 +18,7 @@ from rapidfuzz import fuzz
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QMessageBox, QDialog,
     QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QPushButton,
-    QTableWidget, QTableWidgetItem, QInputDialog
+    QTableWidget, QTableWidgetItem, QInputDialog, QComboBox, QDialogButtonBox
 )
 from student_database import StudentDatabase
 from PyQt6.QtCore import Qt, QObject, pyqtSlot
@@ -322,6 +322,10 @@ class PythonBridge(QObject):
     def requestDatabaseManager(self):
         self.win.open_database_manager()
 
+    @pyqtSlot()
+    def requestAcademicReports(self):
+        self.win.open_academic_reports()
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -392,6 +396,77 @@ class MainWindow(QMainWindow):
 
     def _can_edit(self):
         return self.current_user and self.current_user["role"] in ("admin", "editor")
+
+    def open_academic_reports(self):
+        from academic_reports import REPORTS, build_academic_report
+        dialog = QDialog(self)
+        dialog.setWindowTitle("التقارير الأكاديمية")
+        dialog.resize(1050, 650)
+        layout = QVBoxLayout(dialog)
+        controls = QHBoxLayout()
+        report_box = QComboBox()
+        for key, title in REPORTS.items():
+            report_box.addItem(title, key)
+        search_box = QLineEdit()
+        search_box.setPlaceholderText("بحث بالاسم أو الكود أو الرقم القومي أو ملف المصدر")
+        refresh_btn = QPushButton("عرض التقرير")
+        controls.addWidget(report_box)
+        controls.addWidget(search_box, 1)
+        controls.addWidget(refresh_btn)
+        layout.addLayout(controls)
+        summary_label = QLabel("اختر نوع التقرير ثم اضغط عرض التقرير.")
+        layout.addWidget(summary_label)
+        table = QTableWidget()
+        table.setAlternatingRowColors(True)
+        table.setSortingEnabled(True)
+        layout.addWidget(table, 1)
+        buttons = QDialogButtonBox()
+        export_btn = buttons.addButton("تصدير Excel", QDialogButtonBox.ButtonRole.ActionRole)
+        close_btn = buttons.addButton(QDialogButtonBox.StandardButton.Close)
+        layout.addWidget(buttons)
+        state = {"rows": [], "title": ""}
+        def refresh():
+            title, rows, summary = build_academic_report(
+                self.student_db, report_box.currentData(), search_box.text()
+            )
+            state["rows"], state["title"] = rows, title
+            summary_label.setText(
+                f"إجمالي النتائج: {summary['total']} | وافدون: {summary['expatriates']} | "
+                f"غير وافدين: {summary['local']} | أسماء ناقصة: {summary['missing_name']} | "
+                f"أكواد ناقصة: {summary['missing_code']} | معرفات ناقصة: {summary['missing_national_id']}"
+            )
+            headers = list(rows[0].keys()) if rows else []
+            table.clear()
+            table.setColumnCount(len(headers))
+            table.setRowCount(len(rows))
+            table.setHorizontalHeaderLabels(headers)
+            for row_index, row in enumerate(rows):
+                for col_index, header in enumerate(headers):
+                    table.setItem(row_index, col_index, QTableWidgetItem(str(row.get(header, ""))))
+            table.resizeColumnsToContents()
+        def export_excel():
+            if not state["rows"]:
+                QMessageBox.information(dialog, "التصدير", "لا توجد بيانات لتصديرها.")
+                return
+            path, _ = QFileDialog.getSaveFileName(
+                dialog, "حفظ التقرير", "academic_report.xlsx", "Excel (*.xlsx)"
+            )
+            if not path:
+                return
+            try:
+                import pandas as pd
+                with pd.ExcelWriter(path, engine="openpyxl") as writer:
+                    pd.DataFrame(state["rows"]).to_excel(writer, index=False, sheet_name="التقرير")
+                QMessageBox.information(dialog, "تم التصدير", f"تم حفظ التقرير في:\\n{path}")
+            except Exception as exc:
+                QMessageBox.critical(dialog, "خطأ التصدير", str(exc))
+        refresh_btn.clicked.connect(refresh)
+        search_box.returnPressed.connect(refresh)
+        export_btn.clicked.connect(export_excel)
+        close_btn.clicked.connect(dialog.accept)
+        refresh()
+        dialog.exec()
+
 
     def open_excel_dialog(self):
         file_paths, _ = QFileDialog.getOpenFileNames(
@@ -949,6 +1024,7 @@ class MainWindow(QMainWindow):
             <button class="btn btn-success" id="btnPrint" onclick="pyBridge.requestPrint()" disabled><span>🖨️</span> طباعة / تصدير PDF</button>
             <button class="btn btn-primary" id="btnExportExcel" onclick="pyBridge.requestExportExcel('')" disabled><span>📊</span> تصدير إكسيل مُنظف</button>
             <button class="btn" id="btnDatabase" onclick="pyBridge.requestDatabaseManager()"><span>🗄️</span> قاعدة بيانات الطلاب</button>
+            <button class="btn btn-primary" id="btnAcademicReports" onclick="pyBridge.requestAcademicReports()"><span>📊</span> التقارير الأكاديمية</button>
         </div>
     </div>
 </div>
