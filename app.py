@@ -18,7 +18,7 @@ from rapidfuzz import fuzz
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QMessageBox, QDialog,
     QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QPushButton,
-    QTableWidget, QTableWidgetItem, QInputDialog, QComboBox, QDialogButtonBox
+    QTableWidget, QTableWidgetItem, QInputDialog, QComboBox, QDialogButtonBox, QCheckBox
 )
 from student_database import StudentDatabase
 from PyQt6.QtCore import Qt, QObject, pyqtSlot
@@ -326,6 +326,10 @@ class PythonBridge(QObject):
     def requestAcademicReports(self):
         self.win.open_academic_reports()
 
+    @pyqtSlot()
+    def requestCustomReports(self):
+        self.win.open_custom_report_builder()
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -477,6 +481,188 @@ class MainWindow(QMainWindow):
         export_btn.clicked.connect(export_excel)
         close_btn.clicked.connect(dialog.accept)
         refresh()
+        dialog.exec()
+
+
+    def open_custom_report_builder(self):
+        from custom_reports import (
+            available_report_fields, build_custom_report,
+            export_report_excel, export_report_pdf
+        )
+        field_labels = available_report_fields()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("منشئ التقارير المخصصة")
+        dialog.resize(1150, 760)
+        layout = QVBoxLayout(dialog)
+
+        fields_box = QLineEdit("id,name,student_code,national_id,is_expat,source_file")
+        fields_box.setPlaceholderText("اكتب أسماء الحقول مفصولة بفاصلة")
+        layout.addWidget(QLabel("الحقول المطلوبة (اختر من القائمة بالأسفل واكتب مفاتيحها مفصولة بفاصلة):"))
+        layout.addWidget(fields_box)
+        fields_help = QLabel(" | ".join(key + " = " + label for key, label in field_labels.items()))
+        fields_help.setWordWrap(True)
+        layout.addWidget(fields_help)
+
+        filter_row = QHBoxLayout()
+        field_box = QComboBox()
+        for key, label in field_labels.items():
+            field_box.addItem(label, key)
+        operator_box = QComboBox()
+        operators = [
+            ("يحتوي", "contains"), ("لا يحتوي", "not_contains"),
+            ("يساوي", "eq"), ("لا يساوي", "ne"),
+            ("يبدأ بـ", "starts_with"), ("أكبر من", "gt"),
+            ("أكبر من أو يساوي", "gte"), ("أصغر من", "lt"),
+            ("أصغر من أو يساوي", "lte"), ("فارغ", "is_empty"),
+            ("غير فارغ", "not_empty"),
+        ]
+        for label, key in operators:
+            operator_box.addItem(label, key)
+        filter_value = QLineEdit()
+        filter_value.setPlaceholderText("قيمة الشرط")
+        add_filter_btn = QPushButton("إضافة شرط")
+        filter_row.addWidget(field_box, 2)
+        filter_row.addWidget(operator_box, 2)
+        filter_row.addWidget(filter_value, 2)
+        filter_row.addWidget(add_filter_btn)
+        layout.addLayout(filter_row)
+
+        filters_label = QLabel("لا توجد شروط تصفية.")
+        filters_label.setWordWrap(True)
+        layout.addWidget(filters_label)
+        state = {"filters": [], "report": None}
+
+        def refresh_filter_label():
+            descriptions = []
+            for rule in state["filters"]:
+                label = field_labels[rule["field"]]
+                op = rule["op"]
+                descriptions.append(label + " " + op + " " + str(rule.get("value", "")))
+            filters_label.setText("الشروط: " + (" ؛ ".join(descriptions) if descriptions else "لا توجد شروط"))
+
+        def add_filter():
+            op = operator_box.currentData()
+            value = filter_value.text().strip()
+            if op not in ("is_empty", "not_empty") and not value:
+                QMessageBox.warning(dialog, "شرط غير مكتمل", "اكتب قيمة الشرط أولاً.")
+                return
+            state["filters"].append({
+                "field": field_box.currentData(), "op": op, "value": value
+            })
+            filter_value.clear()
+            refresh_filter_label()
+
+        add_filter_btn.clicked.connect(add_filter)
+        clear_filters_btn = QPushButton("مسح الشروط")
+        clear_filters_btn.clicked.connect(lambda: (state["filters"].clear(), refresh_filter_label()))
+        layout.addWidget(clear_filters_btn)
+
+        grouping_row = QHBoxLayout()
+        group_box = QComboBox()
+        group_box.addItem("بدون تجميع", "")
+        for key, label in field_labels.items():
+            group_box.addItem(label, key)
+        sort_box = QComboBox()
+        sort_box.addItem("بدون ترتيب إضافي", "")
+        for key, label in field_labels.items():
+            sort_box.addItem(label, key)
+        descending_box = QCheckBox("ترتيب تنازلي")
+        limit_box = QLineEdit("500")
+        limit_box.setMaximumWidth(90)
+        offset_box = QLineEdit("0")
+        offset_box.setMaximumWidth(90)
+        grouping_row.addWidget(QLabel("تجميع حسب:"))
+        grouping_row.addWidget(group_box, 2)
+        grouping_row.addWidget(QLabel("ترتيب حسب:"))
+        grouping_row.addWidget(sort_box, 2)
+        grouping_row.addWidget(descending_box)
+        grouping_row.addWidget(QLabel("عدد النتائج:"))
+        grouping_row.addWidget(limit_box)
+        grouping_row.addWidget(QLabel("تجاوز:"))
+        grouping_row.addWidget(offset_box)
+        layout.addLayout(grouping_row)
+
+        action_row = QHBoxLayout()
+        run_btn = QPushButton("إنشاء التقرير")
+        excel_btn = QPushButton("تصدير Excel")
+        pdf_btn = QPushButton("تصدير PDF")
+        action_row.addWidget(run_btn)
+        action_row.addWidget(excel_btn)
+        action_row.addWidget(pdf_btn)
+        layout.addLayout(action_row)
+
+        summary = QLabel("حدد الحقول والشروط ثم أنشئ التقرير.")
+        layout.addWidget(summary)
+        table = QTableWidget()
+        table.setAlternatingRowColors(True)
+        table.setSortingEnabled(True)
+        layout.addWidget(table, 1)
+
+        def run_report():
+            try:
+                fields = [item.strip() for item in fields_box.text().split(",") if item.strip()]
+                if not fields:
+                    raise ValueError("حدد حقلاً واحداً على الأقل.")
+                report = build_custom_report(
+                    self.student_db, fields=fields, filters=state["filters"],
+                    group_by=group_box.currentData() or None,
+                    sort_by=sort_box.currentData() or None,
+                    descending=descending_box.isChecked(),
+                    limit=int(limit_box.text() or "500"),
+                    offset=int(offset_box.text() or "0"),
+                )
+                state["report"] = report
+                summary.setText(
+                    "عدد النتائج المطابقة: " + str(report["total_matched"]) +
+                    " | المعروض: " + str(len(report["rows"])) +
+                    " | السجلات المفحوصة: " + str(report["scanned"]) +
+                    (" | تنبيه: وصلنا لحد الفحص؛ قد توجد نتائج أخرى." if report["truncated"] else "")
+                )
+                rows = report["rows"]
+                table.setSortingEnabled(False)
+                table.clear()
+                table.setColumnCount(len(report["columns"]))
+                table.setRowCount(len(rows))
+                table.setHorizontalHeaderLabels(report["columns"])
+                for row_index, row in enumerate(rows):
+                    for col_index, header in enumerate(report["columns"]):
+                        table.setItem(row_index, col_index, QTableWidgetItem(str(row.get(header, ""))))
+                table.resizeColumnsToContents()
+                table.setSortingEnabled(True)
+            except Exception as exc:
+                QMessageBox.warning(dialog, "تعذر إنشاء التقرير", str(exc))
+
+        def save_excel():
+            report = state.get("report")
+            if not report:
+                QMessageBox.information(dialog, "التصدير", "أنشئ التقرير أولاً.")
+                return
+            path, _ = QFileDialog.getSaveFileName(dialog, "حفظ Excel", "custom_report.xlsx", "Excel (*.xlsx)")
+            if not path:
+                return
+            try:
+                export_report_excel(report, path)
+                QMessageBox.information(dialog, "تم التصدير", "تم حفظ التقرير بنجاح.")
+            except Exception as exc:
+                QMessageBox.critical(dialog, "خطأ Excel", str(exc))
+
+        def save_pdf():
+            report = state.get("report")
+            if not report:
+                QMessageBox.information(dialog, "التصدير", "أنشئ التقرير أولاً.")
+                return
+            path, _ = QFileDialog.getSaveFileName(dialog, "حفظ PDF", "custom_report.pdf", "PDF (*.pdf)")
+            if not path:
+                return
+            try:
+                export_report_pdf(report, path)
+                QMessageBox.information(dialog, "تم التصدير", "تم حفظ ملف PDF بنجاح.")
+            except Exception as exc:
+                QMessageBox.warning(dialog, "تعذر تصدير PDF", str(exc))
+
+        run_btn.clicked.connect(run_report)
+        excel_btn.clicked.connect(save_excel)
+        pdf_btn.clicked.connect(save_pdf)
         dialog.exec()
 
 
@@ -1037,6 +1223,7 @@ class MainWindow(QMainWindow):
             <button class="btn btn-primary" id="btnExportExcel" onclick="pyBridge.requestExportExcel('')" disabled><span>📊</span> تصدير إكسيل مُنظف</button>
             <button class="btn" id="btnDatabase" onclick="pyBridge.requestDatabaseManager()"><span>🗄️</span> قاعدة بيانات الطلاب</button>
             <button class="btn btn-primary" id="btnAcademicReports" onclick="pyBridge.requestAcademicReports()"><span>📊</span> التقارير الأكاديمية</button>
+            <button class="btn" id="btnCustomReports" onclick="pyBridge.requestCustomReports()"><span>🧩</span> منشئ التقارير المخصصة</button>
         </div>
     </div>
 </div>
