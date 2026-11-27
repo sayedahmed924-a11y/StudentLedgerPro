@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -33,8 +34,21 @@ class StudentDatabase:
         conn.execute("PRAGMA busy_timeout = 30000")
         return conn
 
+    @contextmanager
+    def _connection(self):
+        """Commit/rollback and always close the SQLite handle (important on Windows)."""
+        conn = self._connect()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def _initialize(self):
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS students (
@@ -80,7 +94,7 @@ class StudentDatabase:
     def import_students(self, students: list[dict[str, Any]], source_file: str = "") -> int:
         """Append one import batch; repeated imports remain traceable and are not silently overwritten."""
         values = [self._student_values(s, source_file) for s in students]
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.execute(
                 "INSERT INTO import_batches(source_file, imported_count) VALUES (?, ?)",
                 (source_file, len(values)),
@@ -96,7 +110,7 @@ class StudentDatabase:
                     is_expat: bool = False, cells: list | None = None) -> int:
         if not str(name).strip():
             raise ValueError("اسم الطالب مطلوب.")
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.execute("""
                 INSERT INTO students(name, student_code, national_id, is_expat, row_data)
                 VALUES (?, ?, ?, ?, ?)
@@ -108,7 +122,7 @@ class StudentDatabase:
                        national_id: str = "", is_expat: bool = False) -> bool:
         if not str(name).strip():
             raise ValueError("اسم الطالب مطلوب.")
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.execute("""
                 UPDATE students SET name=?, student_code=?, national_id=?, is_expat=?,
                     updated_at=CURRENT_TIMESTAMP WHERE id=?
@@ -117,13 +131,13 @@ class StudentDatabase:
             return cur.rowcount > 0
 
     def delete_student(self, student_id: int) -> bool:
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.execute("DELETE FROM students WHERE id=?", (int(student_id),))
             return cur.rowcount > 0
 
     def search_students(self, query: str = "", limit: int = 500) -> list[dict[str, Any]]:
         q = f"%{query.strip()}%"
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute("""
                 SELECT id, name, student_code, national_id, is_expat, source_file,
                        row_data, audit_data, created_at, updated_at
@@ -141,7 +155,7 @@ class StudentDatabase:
         return result
 
     def count_students(self) -> int:
-        with self._connect() as conn:
+        with self._connection() as conn:
             return int(conn.execute("SELECT COUNT(*) FROM students").fetchone()[0])
 
     def backup(self, destination: str | os.PathLike) -> str:
@@ -149,7 +163,13 @@ class StudentDatabase:
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.resolve() == self.path.resolve():
             raise ValueError("لا يمكن أن يكون ملف النسخة الاحتياطية هو ملف قاعدة البيانات نفسه.")
-        with self._connect() as source, sqlite3.connect(str(target)) as dest:
+        source = self._connect()
+        dest = sqlite3.connect(str(target), timeout=30)
+        try:
             source.backup(dest)
+            dest.commit()
+        finally:
+            dest.close()
+            source.close()
         return str(target)
 
