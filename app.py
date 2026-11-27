@@ -47,16 +47,28 @@ __COPYRIGHT__ = f"Copyright (C) 2026 {__AUTHOR__}. All Rights Reserved."
 # =========================================================================
 
 def get_resource_path(relative_path):
-    """دالة للوصول إلى ملفات الموارد والأيقونة سواء داخل التطوير أو بعد التحويل لـ EXE"""
+    """الوصول إلى موارد التطبيق سواء أثناء التطوير أو بعد التحويل إلى EXE."""
     try:
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath(".")
+        base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
+
+def get_app_directory():
+    """مجلد البرنامج الفعلي؛ تحفظ قاعدة البيانات بجواره ولا تعتمد على مجلد بدء التشغيل."""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
 class SmartMemoryDB:
-    def __init__(self, db_path="forensic_dynamic_ledger.db"):
-        self.conn = sqlite3.connect(db_path)
+    def __init__(self, db_path=None):
+        if db_path is None:
+            db_path = os.path.join(get_app_directory(), "forensic_dynamic_ledger.db")
+        self.conn = sqlite3.connect(db_path, timeout=30)
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
+        self.conn.execute("PRAGMA busy_timeout=30000")
         self.init_db()
 
     def init_db(self):
@@ -191,7 +203,7 @@ class DynamicExcelProcessor:
             self.classified_fields[field] = best_col
             # التعلم التلقائي لا يحفظ إلا أسماء الأعمدة ذات درجة تطابق مرتفعة.
             if best_col >= 0 and best_score >= 85.0:
-                self.db.remember_alias(field, self.all_columns[best_col]['name'], min(0.99, best_score / 100.0))
+                self.db.remember_alias(field, self.all_columns[best_col]['norm'], min(0.99, best_score / 100.0))
 
         title = ""
         for r in range(min(self.header_row + 1, 10)):
