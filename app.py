@@ -12,6 +12,7 @@ import sqlite3
 import datetime
 import base64
 import hashlib
+import ctypes
 import pandas as pd
 from rapidfuzz import fuzz
 
@@ -19,6 +20,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QMessageBox
 )
 from PyQt6.QtCore import Qt, QObject, pyqtSlot
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
 
@@ -39,10 +41,17 @@ def _verify_license():
     except Exception:
         sys.exit(0)
 
-# Signature injected silently into runtime memory
 __AUTHOR__ = _verify_license()
 __COPYRIGHT__ = f"Copyright (C) 2026 {__AUTHOR__}. All Rights Reserved."
 # =========================================================================
+
+def get_resource_path(relative_path):
+    """دالة للوصول إلى ملفات الموارد والأيقونة سواء داخل التطوير أو بعد التحويل لـ EXE"""
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 class SmartMemoryDB:
     def __init__(self, db_path="forensic_dynamic_ledger.db"):
@@ -286,9 +295,12 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("StudentLedgerPro - منظومة سجل قيد الطلاب والتدقيق الجنائي الديناميكية")
         
-        # Injected encrypted metadata
         self.setProperty("LegalCopyright", __COPYRIGHT__)
         self.setProperty("Author", __AUTHOR__)
+
+        icon_path = get_resource_path("app_icon.ico")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
 
         self.setWindowFlags(
             Qt.WindowType.Window |
@@ -369,7 +381,6 @@ class MainWindow(QMainWindow):
         .screen-error-badge {{ display: inline-block; background: #ffc9c9; color: #c92a2a; font-size: 9px; padding: 1px 4px; border-radius: 3px; font-weight: bold; }}
         .cell-has-error {{ background-color: #fff3bf !important; }} .cell-has-danger {{ background-color: #ffe3e3 !important; }}
         
-        /* تذييل الواجهة الرسمي مع إخفائه التام في الطباعة */
         .system-footer {{
             text-align: center;
             padding: 12px;
@@ -442,7 +453,6 @@ class MainWindow(QMainWindow):
     </div>
 </div>
 
-<!-- تذييل حقوق الملكية الفكرية في الواجهة فقط -->
 <div class="system-footer">
     StudentLedgerPro &bull; Developed by <span>{__AUTHOR__}</span> &bull; All Rights Reserved &copy; 2026
 </div>
@@ -586,7 +596,18 @@ class MainWindow(QMainWindow):
         """
 
 if __name__ == "__main__":
+    try:
+        myappid = 'studentledgerpro.academic.audit.v1'
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
+    
+    icon_file = get_resource_path("app_icon.ico")
+    if os.path.exists(icon_file):
+        app.setWindowIcon(QIcon(icon_file))
+
     window = MainWindow()
     window.showMaximized()
     sys.exit(app.exec())
