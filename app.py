@@ -409,6 +409,7 @@ class MainWindow(QMainWindow):
                 f"صف العناوين: {processor.header_row + 1}\\n"
                 f"الخلايا المدمجة التي تم توسيعها: {merged_count}\\n"
                 f"أنماط محتوى تحتاج مراجعة: {len(hints)}\\n"
+                f"الجداول المكتشفة في الورقة: {detection.get('tables_detected', 0)}\\n"
                 f"عناوين جديدة تم تعلمها بثقة مرتفعة: {learning['learned']}\\n"
                 f"إجمالي العناوين المتعلمة: {learning['memory']['aliases']}\\n"
                 f"مرات الاستفادة والتأكيد: {learning['memory']['observations']}\\n\\n"
