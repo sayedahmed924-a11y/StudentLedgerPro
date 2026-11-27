@@ -487,14 +487,15 @@ class MainWindow(QMainWindow):
                     import_errors.append(f"{book['file']}: {db_exc}")
 
             learned_relationships = 0
-            for group in linking["match_groups"]:
-                sheet_names = sorted({source["sheet"] for source in group["sources"] if source["sheet"]})
-                for left_index in range(len(sheet_names)):
-                    for right_index in range(left_index + 1, len(sheet_names)):
-                        if self.student_db.remember_confirmed_relationship(
-                            sheet_names[left_index], sheet_names[right_index]
-                        ):
-                            learned_relationships += 1
+            if imported > 0:
+                for group in linking["match_groups"]:
+                    sheet_names = sorted({source["sheet"] for source in group["sources"] if source["sheet"]})
+                    for left_index in range(len(sheet_names)):
+                        for right_index in range(left_index + 1, len(sheet_names)):
+                            if self.student_db.remember_confirmed_relationship(
+                                sheet_names[left_index], sheet_names[right_index]
+                            ):
+                                learned_relationships += 1
             memory_stats = self.student_db.workbook_learning_stats()
             summary = (
                 f"الملفات المقروءة: {len(workbook_results)}\\n"
