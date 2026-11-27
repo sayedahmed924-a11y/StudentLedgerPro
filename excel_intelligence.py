@@ -423,6 +423,7 @@ def load_best_sheet(file_path: str, ontology: Dict, learned: Dict | None = None,
             raise ValueError("ورقة العمل المحددة لا تحتوي على بيانات.")
         data, merged_ranges = expand_merged_cells(file_path, sheet_name, data)
         profiles = profile_columns(data, header_row + header_depth)
+        table_candidates = detect_table_candidates(data, ontology, learned)
         metadata = {
             "sheet_name": sheet_name,
             "header_row": header_row,
@@ -436,8 +437,8 @@ def load_best_sheet(file_path: str, ontology: Dict, learned: Dict | None = None,
             "merged_ranges_expanded": merged_ranges,
             "column_profiles": profiles,
             "content_hints": find_ambiguous_columns(profiles),
-            "table_candidates": detect_table_candidates(data, ontology, learned),
-            "tables_detected": len(detect_table_candidates(data, ontology, learned)),
+            "table_candidates": table_candidates,
+            "tables_detected": len(table_candidates),
         }
         return data, sheet_name, header_row, metadata
     finally:
