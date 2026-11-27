@@ -15,4 +15,4 @@
 - الحد الافتراضي للعرض 500 سجل، وبحد أقصى 5,000 لكل صفحة لتقليل الضغط على الأجهزة القديمة.
 
 ## الاختبار
-`python -m unittest tests.test_custom_reports`
+`python -m unittest discover -s tests -p 'test_custom_reports.py'`
