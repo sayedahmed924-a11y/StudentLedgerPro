@@ -22,8 +22,8 @@ class ExcelLayoutTests(unittest.TestCase):
     def test_detects_two_row_headers(self):
         frame = pd.DataFrame([
             ["كشف الطلاب", None, None],
-            ["بيانات الطالب", "بيانات الطالب", "بيانات الطالب"],
-            ["الاسم", "الرقم القومي", "كود الطالب"],
+            ["اسم", "الرقم", "كود"],
+            ["الطالب", "القومي", "الطالب"],
             ["أحمد محمد علي", "30101011234567", "123456"],
         ])
         row, depth, confidence, matches = detect_header_structure(frame, ONTOLOGY)
@@ -33,7 +33,7 @@ class ExcelLayoutTests(unittest.TestCase):
         self.assertGreater(confidence, 0)
         self.assertEqual(
             compose_header_values(frame, row, depth),
-            ["بيانات الطالب الاسم", "بيانات الطالب الرقم القومي", "بيانات الطالب كود الطالب"],
+            ["اسم الطالب", "الرقم القومي", "كود الطالب"],
         )
 
     def test_detects_blank_separated_regions(self):
