@@ -373,6 +373,9 @@ class MainWindow(QMainWindow):
     def open_excel_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "📂 اختر ملف إكسيل الطلاب", "", "Excel Files (*.xlsx *.xls)")
         if not file_path: return
+        if not self._can_edit():
+            QMessageBox.warning(self, "صلاحية غير كافية", "استيراد الملفات والتعلم من الأعمدة متاحان للمدير والمحرر فقط.")
+            return
         try:
             processor = DynamicExcelProcessor(file_path, self.student_db)
             result = processor.classify_and_audit()
@@ -380,9 +383,6 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "ملف فارغ", "لم يتم العثور على سجلات طلاب في الملف المحدد.")
                 return
             self.current_data = result
-            if not self._can_edit():
-                QMessageBox.warning(self, "صلاحية غير كافية", "حسابك يسمح بالمشاهدة فقط ولا يمكنه استيراد البيانات.")
-                return
             try:
                 self.student_db.import_students(result.get("students", []), os.path.basename(file_path))
                 self.student_db.log_activity(self.current_user["username"], "IMPORT", os.path.basename(file_path))
