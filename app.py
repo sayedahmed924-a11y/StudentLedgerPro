@@ -70,11 +70,42 @@ class SmartMemoryDB:
                     PRIMARY KEY (field_name, alias)
                 )
             """)
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS import_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_name TEXT NOT NULL,
+                    imported_at TEXT NOT NULL,
+                    row_count INTEGER DEFAULT 0,
+                    column_count INTEGER DEFAULT 0,
+                    header_row INTEGER DEFAULT 0
+                )
+            """)
 
     def get_semantic_aliases(self, field):
         cur = self.conn.cursor()
         cur.execute("SELECT alias, confidence FROM semantic_memory WHERE field_name = ?", (field,))
         return dict(cur.fetchall())
+
+    def remember_alias(self, field, alias, confidence=0.9):
+        alias = normalize_txt(alias)
+        if not field or not alias or len(alias) < 2:
+            return
+        with self.conn:
+            self.conn.execute("""
+                INSERT INTO semantic_memory(field_name, alias, confidence, success_count)
+                VALUES (?, ?, ?, 1)
+                ON CONFLICT(field_name, alias) DO UPDATE SET
+                    confidence = MIN(1.0, MAX(confidence, excluded.confidence)),
+                    success_count = success_count + 1
+            """, (field, alias, float(confidence)))
+
+    def record_import(self, file_name, row_count, column_count, header_row):
+        with self.conn:
+            self.conn.execute("""
+                INSERT INTO import_history(file_name, imported_at, row_count, column_count, header_row)
+                VALUES (?, ?, ?, ?, ?)
+            """, (os.path.basename(file_name), datetime.datetime.now().isoformat(timespec="seconds"),
+                  int(row_count), int(column_count), int(header_row)))
 
 EXPLICIT_FEMALE_NAMES = {
     'فاطمة', 'فاطمه', 'سارة', 'ساره', 'مريم', 'ايه', 'آية', 'نورهان', 'رغد', 'شهد',
@@ -117,7 +148,8 @@ class DynamicExcelProcessor:
     def __init__(self, file_path, db):
         self.file_path = file_path
         self.db = db
-        self.df = pd.read_excel(file_path, header=None, dtype=str)
+        # الاحتفاظ بالقيم كنصوص حتى لا تضيع الأصفار الموجودة في بداية الأكواد.
+        self.df = pd.read_excel(file_path, header=None, dtype=str, na_filter=False)
         self.header_row = 0
         self.classified_fields = {}
         self.all_columns = []
@@ -151,6 +183,9 @@ class DynamicExcelProcessor:
                 if combined > best_score and combined >= 35.0:
                     best_score, best_col = combined, c
             self.classified_fields[field] = best_col
+            # التعلم التلقائي لا يحفظ إلا أسماء الأعمدة ذات درجة تطابق مرتفعة.
+            if best_col >= 0 and best_score >= 85.0:
+                self.db.remember_alias(field, self.all_columns[best_col]['name'], min(0.99, best_score / 100.0))
 
         title = ""
         for r in range(min(self.header_row + 1, 10)):
@@ -267,11 +302,17 @@ class DynamicExcelProcessor:
             })
             auto_serial += 1
 
+        self.db.record_import(self.file_path, len(students), len(self.all_columns), self.header_row)
         return {
             'title': title or "سجل قيد الطلاب المعتمد",
             'columns': [c['name'] for c in self.all_columns],
             'classified_fields': self.classified_fields,
-            'students': students
+            'students': students,
+            'audit_summary': {
+                'rows': len(students), 'columns': len(self.all_columns),
+                'header_row': self.header_row + 1,
+                'errors': sum(1 for student in students if student['errorNotes'])
+            }
         }
 
 class PythonBridge(QObject):
@@ -324,10 +365,23 @@ class MainWindow(QMainWindow):
     def open_excel_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "📂 اختر ملف إكسيل الطلاب", "", "Excel Files (*.xlsx *.xls)")
         if not file_path: return
-        processor = DynamicExcelProcessor(file_path, self.db)
-        result = processor.classify_and_audit()
-        self.current_data = result
-        self.browser.page().runJavaScript(f"loadDynamicDataFromPython({json.dumps(result, ensure_ascii=False)});")
+        try:
+            processor = DynamicExcelProcessor(file_path, self.db)
+            result = processor.classify_and_audit()
+            if not result.get('columns'):
+                raise ValueError("لم يتم العثور على أعمدة في ملف Excel.")
+            self.current_data = result
+            self.browser.page().runJavaScript(f"loadDynamicDataFromPython({json.dumps(result, ensure_ascii=False)});")
+            summary = result.get('audit_summary', {})
+            QMessageBox.information(self, "اكتمل فحص الملف",
+                f"تم تحميل الملف بنجاح.\nالطلاب: {summary.get('rows', 0)}"
+                f"\nالأعمدة: {summary.get('columns', 0)}"
+                f"\nصف العناوين: {summary.get('header_row', 1)}"
+                f"\nطلاب لديهم ملاحظات: {summary.get('errors', 0)}")
+        except Exception as exc:
+            QMessageBox.critical(self, "تعذر قراءة ملف Excel",
+                "لم يتم تحميل الملف. تأكد أن الملف سليم وغير مفتوح بطريقة تمنع قراءته، "
+                "وأنه بصيغة XLSX أو XLS.\n\nالتفاصيل: " + str(exc))
 
     def export_clean_excel(self):
         if not self.current_data: return
@@ -345,7 +399,7 @@ class MainWindow(QMainWindow):
     def _open_print_html(self, html):
         # نحفظ نسخة HTML من العرض الحالي؛ لا ننشئ PDF ولا نستخدم printToPdf.
         # نحذف سكربتات واجهة التطبيق لأن الصفحة المفتوحة خارج Qt لا تحتاج إلى WebChannel.
-        printable_html = re.sub(r'<script\\b[^>]*>.*?</script>', '', html, flags=re.IGNORECASE | re.DOTALL)
+        printable_html = re.sub(r'<script\b[^>]*>.*?</script>', '', html, flags=re.IGNORECASE | re.DOTALL)
         auto_print = '''<script>
 window.addEventListener('load', function () {
     setTimeout(function () { window.print(); }, 600);
@@ -465,7 +519,7 @@ window.addEventListener('load', function () {
     </div>
     <div class="actions-bar">
         <div>
-            <button class="btn btn-success" id="btnPrint" onclick="pyBridge.requestPrint()" disabled><span>🖨️</span> طباعة</button>
+            <button class="btn btn-success" id="btnPrint" onclick="confirmPrintReview()" disabled><span>🖨️</span> مراجعة ثم طباعة</button>
             <button class="btn btn-primary" id="btnExportExcel" onclick="pyBridge.requestExportExcel('')" disabled><span>📊</span> تصدير إكسيل مُنظف</button>
         </div>
     </div>
@@ -487,6 +541,43 @@ window.addEventListener('load', function () {
     new QWebChannel(qt.webChannelTransport, function (channel) {{ pyBridge = channel.objects.pyBridge; }});
     let globalData = null;
     let activeErrorFilter = 'all';
+    const SETTINGS_KEY = 'StudentLedgerPro.settings.v1';
+
+    function saveUserSettings() {{
+        const settings = {{ rows: document.getElementById('rowsPerPageInput').value, cols: document.getElementById('colsPerPageInput').value, serial: document.getElementById('serialModeSelect').value, blank: document.getElementById('blankFirstPageCheck').checked, title: document.getElementById('titleInput').value }};
+        try {{ localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); }} catch (e) {{}}
+    }}
+    function restoreUserSettings() {{
+        try {{ const v = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); if (!v) return;
+            if (v.rows) document.getElementById('rowsPerPageInput').value = v.rows;
+            if (v.cols) document.getElementById('colsPerPageInput').value = v.cols;
+            if (v.serial) document.getElementById('serialModeSelect').value = v.serial;
+            if (typeof v.blank === 'boolean') document.getElementById('blankFirstPageCheck').checked = v.blank;
+            if (v.title) document.getElementById('titleInput').value = v.title;
+        }} catch (e) {{}}
+    }}
+    function getFixedColumnIndexes() {{
+        if (!globalData) return [];
+        const fields = globalData.classified_fields || {{}};
+        const result = [];
+        ['code','name','nationalId','seatingNo'].forEach(field => {{ const i = Number(fields[field]); if (Number.isInteger(i) && i >= 0 && i < globalData.columns.length && !result.includes(i)) result.push(i); }});
+        return result;
+    }}
+    function confirmPrintReview() {{
+        if (!globalData) return;
+        const rows = Math.max(1, parseInt(document.getElementById('rowsPerPageInput').value, 10) || 10);
+        const cols = Math.max(1, parseInt(document.getElementById('colsPerPageInput').value, 10) || 10);
+        const fixed = getFixedColumnIndexes().length;
+        const capacity = Math.max(1, cols - fixed);
+        const parts = Math.max(1, Math.ceil(Math.max(0, globalData.columns.length - fixed) / capacity));
+        const rowParts = Math.max(1, Math.ceil(globalData.students.length / rows));
+        const summary = globalData.audit_summary || {{}};
+        const pages = parts * rowParts + (document.getElementById('blankFirstPageCheck').checked ? 1 : 0);
+        const msg = 'مراجعة قبل الطباعة\\nعدد الطلاب: ' + globalData.students.length + '\\nعدد الأعمدة: ' + globalData.columns.length + '\\nأعمدة التعريف المتكررة في كل جزء: ' + fixed + '\\nأجزاء الأعمدة: ' + parts + '\\nالصفحات المتوقعة: ' + pages + '\\nطلاب لديهم ملاحظات: ' + (summary.errors || 0) + '\\n\\nفتح نافذة الطباعة العادية في المتصفح؟';
+        if (window.confirm(msg)) pyBridge.requestPrint();
+    }}
+    restoreUserSettings();
+    ['rowsPerPageInput','colsPerPageInput','serialModeSelect','titleInput','blankFirstPageCheck'].forEach(id => {{ const el = document.getElementById(id); el.addEventListener('change', saveUserSettings); el.addEventListener('input', saveUserSettings); }});
 
     function loadDynamicDataFromPython(data) {{
         globalData = data;
@@ -527,16 +618,14 @@ window.addEventListener('load', function () {
         const container = document.getElementById('pagesContainer');
         container.innerHTML = '';
         if (!globalData) return;
-
         const title = toArabicDigits(document.getElementById('titleInput').value);
         const query = document.getElementById('searchInput').value.trim().toLowerCase();
-        const rowsPerPage = parseInt(document.getElementById('rowsPerPageInput').value, 10) || 10;
-        const colsPerPage = parseInt(document.getElementById('colsPerPageInput').value, 10) || 10;
+        const rowsPerPage = Math.max(1, parseInt(document.getElementById('rowsPerPageInput').value, 10) || 10);
+        const colsPerPage = Math.max(1, parseInt(document.getElementById('colsPerPageInput').value, 10) || 10);
         const serialMode = document.getElementById('serialModeSelect').value;
         const startBlank = document.getElementById('blankFirstPageCheck').checked;
-
-        let filtered = globalData.students.filter(s => {{
-            const matchQ = !query || s.name.toLowerCase().includes(query) || s.code.includes(query) || s.nationalId.includes(query);
+        const filtered = globalData.students.filter(s => {{
+            const matchQ = !query || (s.name || '').toLowerCase().includes(query) || (s.code || '').includes(query) || (s.nationalId || '').includes(query);
             let matchF = true;
             if (activeErrorFilter === 'nid_error') matchF = s.hasNidError;
             else if (activeErrorFilter === 'biometric') matchF = s.hasBiometricError;
@@ -545,77 +634,54 @@ window.addEventListener('load', function () {
             else if (activeErrorFilter === 'expat') matchF = s.isExpat;
             return matchQ && matchF;
         }});
-
-        if (filtered.length === 0) {{
-            container.innerHTML = '<div style="color:#fff; padding:30px;">لا توجد نتائج تطابق خيار الفرز.</div>';
-            return;
-        }}
-
+        if (!filtered.length) {{ container.innerHTML = '<div style="color:#fff;padding:30px;">لا توجد نتائج تطابق خيار الفرز.</div>'; return; }}
         if (startBlank) {{
-            const blank = document.createElement('div');
-            blank.className = 'page-sheet blank-start-page';
-            blank.innerHTML = '<div class="no-print" style="margin:auto; text-align:center; color:#777; border:2px dashed #aaa; padding:40px; border-radius:8px;">📄 <strong>صفحة بداية فارغة لضبط التقابل الدفتري وجه وظهر</strong></div>';
+            const blank = document.createElement('div'); blank.className = 'page-sheet blank-start-page';
+            blank.innerHTML = '<div class="no-print" style="margin:auto;text-align:center;color:#777;border:2px dashed #aaa;padding:40px;border-radius:8px;">📄 <strong>صفحة بداية فارغة لضبط التقابل الدفتري وجه وظهر</strong></div>';
             container.appendChild(blank);
         }}
-
         const allColumns = globalData.columns;
-        const totalColChunks = Math.ceil(allColumns.length / colsPerPage);
+        const fixedIndexes = getFixedColumnIndexes();
+        const variableIndexes = allColumns.map((_, i) => i).filter(i => !fixedIndexes.includes(i));
+        const variableCapacity = Math.max(1, colsPerPage - fixedIndexes.length);
+        const variableChunks = [];
+        if (!variableIndexes.length) variableChunks.push([]);
+        else for (let i = 0; i < variableIndexes.length; i += variableCapacity) variableChunks.push(variableIndexes.slice(i, i + variableCapacity));
+        const totalColChunks = variableChunks.length;
         const totalRowChunks = Math.ceil(filtered.length / rowsPerPage);
-        let pageCounter = 1;
-        const totalPages = totalRowChunks * totalColChunks;
-
+        let pageCounter = startBlank ? 2 : 1;
+        const totalPages = totalRowChunks * totalColChunks + (startBlank ? 1 : 0);
         for (let rChunk = 0; rChunk < totalRowChunks; rChunk++) {{
             const studentSlice = filtered.slice(rChunk * rowsPerPage, (rChunk + 1) * rowsPerPage);
-            // نحسب الرقم مرة واحدة لكل طالب قبل تقسيم الأعمدة؛ لذلك يظل مطابقاً في كل جزء أفقي.
-            const serialNumbers = studentSlice.map((student, idx) =>
-                serialMode === 'smart_continuous' ? (rChunk * rowsPerPage) + idx + 1 : idx + 1
-            );
+            const serialNumbers = studentSlice.map((student, idx) => serialMode === 'smart_continuous' ? (rChunk * rowsPerPage) + idx + 1 : idx + 1);
             for (let cChunk = 0; cChunk < totalColChunks; cChunk++) {{
-                const colSlice = allColumns.slice(cChunk * colsPerPage, (cChunk + 1) * colsPerPage);
-                const colStartIndex = cChunk * colsPerPage;
-                const pageSheet = document.createElement('div');
-                pageSheet.className = 'page-sheet';
-
-                const partLabel = (totalColChunks > 1) ? ` (الجزء ${{toArabicDigits(cChunk + 1)}} من ${{toArabicDigits(totalColChunks)}})` : '';
-                pageSheet.innerHTML = `
-                    <div class="page-header">
-                        <span class="page-tag">سجل ديناميكي</span>
-                        <div class="page-title">${{title}} ${{partLabel}}</div>
-                        <span class="page-tag">صفحة: ${{toArabicDigits(pageCounter)}} من ${{toArabicDigits(totalPages)}}</span>
-                    </div>
-                `;
-
-                const table = document.createElement('table');
-                table.className = 'ledger-table';
-                let theadHtml = `<thead><tr><th style="width: 4.5%;">م</th>`;
-                colSlice.forEach(colName => {{ theadHtml += `<th>${{colName}}</th>`; }});
-                theadHtml += `</tr></thead>`;
-
-                let tbodyHtml = `<tbody>`;
-                studentSlice.forEach((s, idx) => {{
+                const colIndexes = [...fixedIndexes, ...variableChunks[cChunk]];
+                const pageSheet = document.createElement('div'); pageSheet.className = 'page-sheet';
+                const partLabel = totalColChunks > 1 ? ` (الجزء ${{toArabicDigits(cChunk + 1)}} من ${{toArabicDigits(totalColChunks)}})` : '';
+                pageSheet.innerHTML = `<div class="page-header"><span class="page-tag">سجل ديناميكي</span><div class="page-title">${{title}}${{partLabel}}</div><span class="page-tag">صفحة: ${{toArabicDigits(pageCounter)}} من ${{toArabicDigits(totalPages)}}</span></div>`;
+                const table = document.createElement('table'); table.className = 'ledger-table';
+                let theadHtml = '<thead><tr><th style="width:4.5%;">م</th>';
+                colIndexes.forEach(i => {{ theadHtml += `<th>${{allColumns[i]}}</th>`; }});
+                theadHtml += '</tr></thead>';
+                let tbodyHtml = '<tbody>';
+                studentSlice.forEach((student, idx) => {{
                     const serialNum = serialNumbers[idx];
-                    const badge = (s.errorNotes && s.errorNotes.length > 0 && cChunk === 0) ? `<span class="screen-error-badge">⚠️</span>` : '';
+                    const badge = student.errorNotes && student.errorNotes.length && cChunk === 0 ? '<span class="screen-error-badge">⚠️</span>' : '';
                     tbodyHtml += `<tr><td style="font-weight:bold;">${{toArabicDigits(serialNum)}}</td>`;
-
-                    for (let c = 0; c < colSlice.length; c++) {{
-                        const cellVal = s.cells[colStartIndex + c] || '';
+                    colIndexes.forEach(i => {{
+                        const cellVal = student.cells[i] || '';
                         let cellClass = '';
-                        if (s.hasNidError && (colStartIndex + c) === globalData.classified_fields['nationalId']) cellClass = 'cell-has-danger';
-                        if (s.hasSeatingError && (colStartIndex + c) === globalData.classified_fields['seatingNo']) cellClass = 'cell-has-danger';
-                        if (s.hasMilitaryError && (colStartIndex + c) === globalData.classified_fields['militaryStatus']) cellClass = 'cell-has-error';
-
-                        const isNameCol = ((colStartIndex + c) === globalData.classified_fields['name']);
-                        const alignStyle = isNameCol ? 'text-align:right; font-weight:bold; padding-right:5px;' : '';
-                        tbodyHtml += `<td class="${{cellClass}}" style="${{alignStyle}}">${{isNameCol ? badge : ''}}${{toArabicDigits(cellVal)}}</td>`;
-                    }}
-                    tbodyHtml += `</tr>`;
+                        if (student.hasNidError && i === globalData.classified_fields['nationalId']) cellClass = 'cell-has-danger';
+                        if (student.hasSeatingError && i === globalData.classified_fields['seatingNo']) cellClass = 'cell-has-danger';
+                        if (student.hasMilitaryError && i === globalData.classified_fields['militaryStatus']) cellClass = 'cell-has-error';
+                        const isName = i === globalData.classified_fields['name'];
+                        const align = isName ? 'text-align:right;font-weight:bold;padding-right:5px;' : '';
+                        tbodyHtml += `<td class="${{cellClass}}" style="${{align}}">${{isName ? badge : ''}}${{toArabicDigits(cellVal)}}</td>`;
+                    }});
+                    tbodyHtml += '</tr>';
                 }});
-                tbodyHtml += `</tbody>`;
-
-                table.innerHTML = theadHtml + tbodyHtml;
-                pageSheet.appendChild(table);
-                container.appendChild(pageSheet);
-                pageCounter++;
+                tbodyHtml += '</tbody>'; table.innerHTML = theadHtml + tbodyHtml;
+                pageSheet.appendChild(table); container.appendChild(pageSheet); pageCounter++;
             }}
         }}
     }}
