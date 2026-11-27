@@ -445,6 +445,9 @@ class MainWindow(QMainWindow):
             return int(table.item(row, 0).text())
 
         def add_record():
+            if not self._can_edit():
+                QMessageBox.warning(dialog, "صلاحية غير كافية", "لا تملك صلاحية إضافة السجلات.")
+                return
             name, ok = QInputDialog.getText(dialog, "إضافة طالب", "اسم الطالب:")
             if not ok:
                 return
@@ -456,11 +459,15 @@ class MainWindow(QMainWindow):
                 return
             try:
                 self.student_db.add_student(name, code, nid)
+                self.student_db.log_activity(self.current_user["username"], "ADD_STUDENT", code)
                 refresh()
             except Exception as exc:
                 QMessageBox.critical(dialog, "تعذر الإضافة", str(exc))
 
         def edit_record():
+            if not self._can_edit():
+                QMessageBox.warning(dialog, "صلاحية غير كافية", "لا تملك صلاحية تعديل السجلات.")
+                return
             student_id = selected_id()
             if student_id is None:
                 return
@@ -479,11 +486,15 @@ class MainWindow(QMainWindow):
                 return
             try:
                 self.student_db.update_student(student_id, name=name, student_code=code, national_id=nid)
+                self.student_db.log_activity(self.current_user["username"], "EDIT_STUDENT", str(student_id))
                 refresh()
             except Exception as exc:
                 QMessageBox.critical(dialog, "تعذر التعديل", str(exc))
 
         def delete_record():
+            if self.current_user["role"] != "admin":
+                QMessageBox.warning(dialog, "صلاحية غير كافية", "حذف السجلات متاح للمدير فقط.")
+                return
             student_id = selected_id()
             if student_id is None:
                 return
@@ -491,6 +502,7 @@ class MainWindow(QMainWindow):
                                           "هل تريد حذف الطالب المحدد نهائياً؟")
             if answer == QMessageBox.StandardButton.Yes:
                 self.student_db.delete_student(student_id)
+                self.student_db.log_activity(self.current_user["username"], "DELETE_STUDENT", str(student_id))
                 refresh()
 
         def backup_database():
@@ -506,8 +518,13 @@ class MainWindow(QMainWindow):
 
         search.textChanged.connect(refresh)
         buttons = QHBoxLayout()
-        for caption, callback in (("إضافة طالب", add_record), ("تعديل المحدد", edit_record),
-                                  ("حذف المحدد", delete_record), ("نسخ احتياطي", backup_database)):
+        actions = []
+        if self._can_edit():
+            actions.extend((("إضافة طالب", add_record), ("تعديل المحدد", edit_record)))
+        if self.current_user["role"] == "admin":
+            actions.append(("حذف المحدد", delete_record))
+        actions.append(("نسخ احتياطي", backup_database))
+        for caption, callback in actions:
             button = QPushButton(caption)
             button.clicked.connect(callback)
             buttons.addWidget(button)
