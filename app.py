@@ -400,11 +400,19 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "تنبيه قاعدة البيانات",
                                     f"تم تحميل الملف للفحص، لكن تعذر حفظ نسخة البيانات في SQLite:\\n{db_exc}")
             learning = processor.learning_summary
+            detection = processor.detection
+            hints = detection.get("content_hints", [])
+            merged_count = detection.get("merged_ranges_expanded", 0)
             QMessageBox.information(
-                self, "التعلم الذكي",
-                f"تم التعرف على {learning['learned']} عنوان عمود بثقة مرتفعة وحفظه.\\n"
+                self, "تحليل ملف Excel والتعلم",
+                f"ورقة العمل: {processor.sheet_name}\\n"
+                f"صف العناوين: {processor.header_row + 1}\\n"
+                f"الخلايا المدمجة التي تم توسيعها: {merged_count}\\n"
+                f"أنماط محتوى تحتاج مراجعة: {len(hints)}\\n"
+                f"عناوين جديدة تم تعلمها بثقة مرتفعة: {learning['learned']}\\n"
                 f"إجمالي العناوين المتعلمة: {learning['memory']['aliases']}\\n"
-                f"مرات الاستفادة والتأكيد: {learning['memory']['observations']}"
+                f"مرات الاستفادة والتأكيد: {learning['memory']['observations']}\\n\\n"
+                "ملاحظة: أنماط محتوى الأعمدة مؤشرات للمراجعة وليست تعييناً تلقائياً."
             )
             payload = json.dumps(result, ensure_ascii=False).replace("</", "<\\/")
             self.browser.page().runJavaScript(f"loadDynamicDataFromPython({payload});")
