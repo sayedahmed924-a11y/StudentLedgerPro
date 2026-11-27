@@ -1469,7 +1469,10 @@ class MainWindow(QMainWindow):
 
                 const table = document.createElement('table');
                 table.className = 'ledger-table';
-                let theadHtml = `<thead><tr><th style="width: 4.5%;">م</th>`;
+                // The synthetic serial column is shown only on the first horizontal
+                // segment; subsequent segments contain only their own source columns.
+                let theadHtml = `<thead><tr>`;
+                if (cChunk === 0) theadHtml += `<th style="width: 4.5%;">م</th>`;
                 colSlice.forEach(colName => {{ theadHtml += `<th>${{escapeHtml(colName)}}</th>`; }});
                 theadHtml += `</tr></thead>`;
 
@@ -1477,7 +1480,8 @@ class MainWindow(QMainWindow):
                 studentSlice.forEach((s, idx) => {{
                     let serialNum = (serialMode === 'smart_continuous') ? ((rChunk * rowsPerPage) + idx + 1) : (idx + 1);
                     const badge = (s.errorNotes && s.errorNotes.length > 0 && cChunk === 0) ? `<span class="screen-error-badge">⚠️</span>` : '';
-                    tbodyHtml += `<tr><td style="font-weight:bold;">${{toArabicDigits(serialNum)}}</td>`;
+                    tbodyHtml += `<tr>`;
+                    if (cChunk === 0) tbodyHtml += `<td style="font-weight:bold;">${{toArabicDigits(serialNum)}}</td>`;
 
                     for (let c = 0; c < colSlice.length; c++) {{
                         const cellVal = s.cells[colStartIndex + c] || '';
