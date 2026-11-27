@@ -3,7 +3,7 @@ name: Build StudentLedgerPro
 on:
   workflow_dispatch:
   pull_request:
-    branches: [main, phase2/arabic-ui]
+    branches: [main, phase2/arabic-ui, phase7-database-beside-app]
 
 jobs:
   build:
@@ -25,7 +25,7 @@ jobs:
 
     - name: Check Python Syntax
       run: |
-        python -m py_compile app.py
+        python -m py_compile app.py student_database.py portable_storage.py arabic_intelligence.py
 
     - name: Run SQLite Database Tests
       run: |
