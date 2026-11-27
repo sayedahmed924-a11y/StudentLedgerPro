@@ -96,22 +96,20 @@ class DynamicExcelProcessor:
     def __init__(self, file_path, db):
         self.file_path = file_path
         self.db = db
-        self.df = pd.read_excel(file_path, header=None, dtype=str)
-        if self.df.empty or self.df.shape[1] == 0:
-            raise ValueError("ملف Excel لا يحتوي على بيانات قابلة للقراءة.")
-        self.header_row = 0
+        from excel_intelligence import load_best_sheet
+        learned = {
+            field: db.get_semantic_aliases(field)
+            for field in ONTOLOGY_RULES
+        }
+        self.df, self.sheet_name, self.header_row, self.detection = load_best_sheet(
+            file_path, ONTOLOGY_RULES, learned
+        )
         self.classified_fields = {}
         self.all_columns = []
 
     def classify_and_audit(self):
-        best_row, max_score = 0, -1
-        for r in range(min(15, len(self.df))):
-            row_vals = [normalize_txt(str(x)) for x in self.df.iloc[r].dropna().tolist()]
-            score = sum(2 for val in row_vals for f, spec in ONTOLOGY_RULES.items() if any(fuzz.partial_ratio(val, normalize_txt(h)) > 80 for h in spec['headers']))
-            if score > max_score:
-                max_score, best_row = score, r
-
-        self.header_row = best_row
+        # Header row and worksheet are selected by the adaptive workbook scanner.
+        best_row = self.header_row
         raw_headers = self.df.iloc[self.header_row].tolist()
         self.all_columns = [{'idx': c, 'name': str(h).strip() if pd.notna(h) else f"عمود_{c+1}", 'norm': normalize_txt(str(h))} for c, h in enumerate(raw_headers)]
 
@@ -275,7 +273,9 @@ class DynamicExcelProcessor:
             'title': title or "سجل قيد الطلاب المعتمد",
             'columns': [c['name'] for c in self.all_columns],
             'classified_fields': self.classified_fields,
-            'students': students
+            'students': students,
+            'excel_detection': self.detection,
+            'source_sheet': self.sheet_name
         }
 
 class PythonBridge(QObject):
