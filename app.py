@@ -441,6 +441,8 @@ class MainWindow(QMainWindow):
                 return
 
             linking = analyze_workbooks(workbook_results)
+            from workbook_audit import audit_workbooks
+            audit = audit_workbooks(workbook_results)
             all_students = []
             for book in workbook_results:
                 for student in book["students"]:
@@ -460,7 +462,8 @@ class MainWindow(QMainWindow):
                 f"مجموعات بها تعارضات: {linking['conflict_count']}\\n"
                 f"سجلات تحتاج مراجعة حقول أساسية: {preview['warning_count']}\\n"
                 f"أنماط ملفات سابقة متشابهة: {sum(1 for book in workbook_results if book['profile_hints'] and book['profile_hints'][0]['similarity'] >= 0.5)}\\n"
-                f"تعيينات أعمدة تحتاج مراجعة: {sum(book['mapping_summary']['review_count'] for book in workbook_results)}\\n\\n"
+                f"تعيينات أعمدة تحتاج مراجعة: {sum(book['mapping_summary']['review_count'] for book in workbook_results)}\\n"
+                f"نتائج التدقيق: أخطاء {audit['severity_counts']['error']}، تحذيرات {audit['severity_counts']['warning']}، ملاحظات {audit['severity_counts']['info']}\\n\\n"
                 "المطابقة تعتمد على كود الطالب أو الرقم القومي بعد توحيد الأرقام.\\n"
                 "لن يتم دمج السجلات أو حذفها تلقائياً.\\n"
             )
@@ -474,6 +477,14 @@ class MainWindow(QMainWindow):
                         )
             if mapping_lines:
                 answer_text += "\\n\\nتعيينات تحتاج مراجعة:\\n" + "\\n".join(mapping_lines[:12])
+            audit_lines = [
+                f"{item['severity'].upper()}: {item['message']} — " +
+                ", ".join(f"{source['file']} / {source['sheet']} / صف {source['row']}"
+                          for source in item["sources"][:4])
+                for item in audit["findings"] if item["severity"] in ("error", "warning")
+            ]
+            if audit_lines:
+                answer_text += "\\n\\nنتائج التدقيق التي تستحق المراجعة:\\n" + "\\n".join(audit_lines[:15])
             if failures:
                 answer_text += "\\nملفات لم تُقرأ بالكامل:\\n" + "\\n".join(failures[:8])
             answer_text += "\\nهل تريد اعتماد استيراد السجلات المكتشفة؟"
