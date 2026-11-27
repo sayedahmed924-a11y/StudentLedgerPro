@@ -419,6 +419,7 @@ class MainWindow(QMainWindow):
                         "result": result,
                         "headers": headers,
                         "profile_hints": profile_hints,
+                        "mapping_summary": processor.field_mapping_summary,
                     })
                 except Exception as file_exc:
                     failures.append(f"{os.path.basename(file_path)}: {file_exc}")
@@ -447,10 +448,21 @@ class MainWindow(QMainWindow):
                 f"مجموعات الربط بين الملفات: {linking['match_group_count']}\\n"
                 f"مجموعات بها تعارضات: {linking['conflict_count']}\\n"
                 f"سجلات تحتاج مراجعة حقول أساسية: {preview['warning_count']}\\n"
-                f"أنماط ملفات سابقة متشابهة: {sum(1 for book in workbook_results if book['profile_hints'] and book['profile_hints'][0]['similarity'] >= 0.5)}\\n\\n"
+                f"أنماط ملفات سابقة متشابهة: {sum(1 for book in workbook_results if book['profile_hints'] and book['profile_hints'][0]['similarity'] >= 0.5)}\\n"
+                f"تعيينات أعمدة تحتاج مراجعة: {sum(book['mapping_summary']['review_count'] for book in workbook_results)}\\n\\n"
                 "المطابقة تعتمد على كود الطالب أو الرقم القومي بعد توحيد الأرقام.\\n"
                 "لن يتم دمج السجلات أو حذفها تلقائياً.\\n"
             )
+            mapping_lines = []
+            for book in workbook_results:
+                for field, detail in book["mapping_summary"]["assignments"].items():
+                    if detail["review_required"]:
+                        mapping_lines.append(
+                            f"{book['file']} — {field}: {detail['header']} "
+                            f"({detail['confidence']} / {detail['score']:.0f}%) — {detail['reason']}"
+                        )
+            if mapping_lines:
+                answer_text += "\\n\\nتعيينات تحتاج مراجعة:\\n" + "\\n".join(mapping_lines[:12])
             if failures:
                 answer_text += "\\nملفات لم تُقرأ بالكامل:\\n" + "\\n".join(failures[:8])
             answer_text += "\\nهل تريد اعتماد استيراد السجلات المكتشفة؟"
