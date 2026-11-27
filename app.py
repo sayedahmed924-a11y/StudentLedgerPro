@@ -466,6 +466,18 @@ class MainWindow(QMainWindow):
                 self.student_db.compare_student_history(all_students, academic_period)
                 if academic_period.strip() else []
             )
+            reference_comparison = None
+            available_periods = self.student_db.list_history_periods()
+            if available_periods:
+                reference_period, reference_ok = QInputDialog.getItem(
+                    self, "مقارنة بكشف مرجعي",
+                    "اختر فترة محفوظة للمقارنة أو تخطَّ المقارنة:",
+                    ["تخطي المقارنة"] + available_periods, 0, False
+                )
+                if reference_ok and reference_period != "تخطي المقارنة":
+                    reference_comparison = self.student_db.compare_with_reference_roster(
+                        all_students, reference_period
+                    )
             answer_text = (
                 f"عدد الملفات المقروءة: {len(workbook_results)}\\n"
                 f"عدد السجلات: {preview['row_count']}\\n"
@@ -475,7 +487,13 @@ class MainWindow(QMainWindow):
                 f"أنماط ملفات سابقة متشابهة: {sum(1 for book in workbook_results if book['profile_hints'] and book['profile_hints'][0]['similarity'] >= 0.5)}\\n"
                 f"تعيينات أعمدة تحتاج مراجعة: {sum(book['mapping_summary']['review_count'] for book in workbook_results)}\\n"
                 f"نتائج التدقيق: أخطاء {audit['severity_counts']['error']}، تحذيرات {audit['severity_counts']['warning']}، ملاحظات {audit['severity_counts']['info']}\\n"
-                f"تغيرات تاريخية مكتشفة: {len(history_findings)}\\n\\n"
+                f"تغيرات تاريخية مكتشفة: {len(history_findings)}\\n"
+                + (f"مقارنة مع {reference_comparison['reference_period']}: "
+                   f"مستجدون {len(reference_comparison['new_students'])}، "
+                   f"مفقودون {len(reference_comparison['missing_students'])}، "
+                   f"تغيرات {len(reference_comparison['changed_students'])}\\n"
+                   if reference_comparison else "")
+                + "\\n"
                 "المطابقة تعتمد على كود الطالب أو الرقم القومي بعد توحيد الأرقام.\\n"
                 "لن يتم دمج السجلات أو حذفها تلقائياً.\\n"
             )
@@ -504,6 +522,16 @@ class MainWindow(QMainWindow):
             ]
             if history_lines:
                 answer_text += "\\n\\nتغيرات مقارنة بالفترات السابقة:\\n" + "\\n".join(history_lines[:12])
+            if reference_comparison:
+                sections = [
+                    ("طلاب مستجدون", "new_students", lambda x: f"{x.get('name','')} / كود {x.get('code','')}"),
+                    ("طلاب غير موجودين في الكشف الحالي", "missing_students", lambda x: f"{x.get('name','')} / كود {x.get('code','')} — {x.get('source_file','')}"),
+                    ("طلاب تغيرت بياناتهم", "changed_students", lambda x: f"{x.get('old_name','')} ← {x.get('new_name','')}، الكود {x.get('old_code','')} ← {x.get('new_code','')}"),
+                ]
+                for heading, key, formatter in sections:
+                    entries = reference_comparison[key]
+                    answer_text += f"\\n\\n{heading} ({len(entries)}):\\n"
+                    answer_text += "\\n".join(formatter(x) for x in entries[:10]) or "لا يوجد"
             if failures:
                 answer_text += "\\nملفات لم تُقرأ بالكامل:\\n" + "\\n".join(failures[:8])
             answer_text += "\\nهل تريد اعتماد استيراد السجلات المكتشفة؟"
