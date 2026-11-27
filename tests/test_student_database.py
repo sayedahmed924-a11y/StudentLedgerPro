@@ -28,6 +28,19 @@ class StudentDatabaseTests(unittest.TestCase):
         copied = StudentDatabase(backup)
         self.assertEqual(copied.count_students(), 1)
 
+    def test_user_authentication_and_roles(self):
+        user_id = self.db.create_user("operator", "StrongPass123", "editor")
+        self.assertGreater(user_id, 0)
+        self.assertIsNone(self.db.authenticate("operator", "incorrect"))
+        user = self.db.authenticate("OPERATOR", "StrongPass123")
+        self.assertEqual(user["role"], "editor")
+        self.assertTrue(self.db.set_user_active(user_id, False))
+        self.assertIsNone(self.db.authenticate("operator", "StrongPass123"))
+
+    def test_activity_log(self):
+        self.db.log_activity("admin", "IMPORT", "sample.xlsx")
+        self.assertEqual(self.db.recent_activity()[0]["action"], "IMPORT")
+
 
 if __name__ == "__main__":
     unittest.main()
