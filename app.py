@@ -395,9 +395,34 @@ class MainWindow(QMainWindow):
             if not result.get('students'):
                 QMessageBox.warning(self, "ملف فارغ", "لم يتم العثور على سجلات طلاب في الملف المحدد.")
                 return
+            from excel_import_pipeline import prepare_import_preview, select_preview_rows
+            preview = prepare_import_preview(
+                result.get("students", []),
+                source_file=os.path.basename(file_path),
+                source_sheet=processor.sheet_name,
+                table_index=1,
+            )
+            duplicate_count = preview["duplicate_group_count"]
+            warning_count = preview["warning_count"]
+            answer = QMessageBox.question(
+                self,
+                "معاينة واعتماد استيراد Excel",
+                f"عدد السجلات المكتشفة: {preview['row_count']}\\n"
+                f"السجلات التي تحتاج مراجعة: {warning_count}\\n"
+                f"مجموعات الأكواد/الأرقام القومية المكررة: {duplicate_count}\\n\\n"
+                "سيتم الاحتفاظ بمصدر كل سجل وبياناته الأصلية. لن يتم دمج أو حذف أي طالب.\\n"
+                "هل تريد اعتماد استيراد جميع السجلات الآن؟",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                QMessageBox.information(self, "تم إلغاء الاستيراد",
+                                        "لم يتم حفظ أي سجل في قاعدة البيانات. يمكنك مراجعة الملف ثم إعادة استيراده.")
+                return
+            approved_students = select_preview_rows(preview, range(preview["row_count"]))
             self.current_data = result
             try:
-                self.student_db.import_students(result.get("students", []), os.path.basename(file_path))
+                self.student_db.import_students(approved_students, os.path.basename(file_path))
                 self.student_db.log_activity(self.current_user["username"], "IMPORT", os.path.basename(file_path))
             except Exception as db_exc:
                 QMessageBox.warning(self, "تنبيه قاعدة البيانات",
