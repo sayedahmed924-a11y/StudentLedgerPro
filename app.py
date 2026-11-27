@@ -15,6 +15,7 @@ import hashlib
 import ctypes
 import pandas as pd
 from rapidfuzz import fuzz
+from arabic_intelligence import normalize_arabic_text
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QMessageBox, QDialog,
@@ -109,11 +110,8 @@ def to_western(val):
     return str(val).strip().translate(str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789'))
 
 def normalize_txt(text):
-    if not text: return ''
-    text = str(text).strip().lower()
-    text = re.sub(r'[\u064B-\u065F]', '', text)
-    text = re.sub(r'[أإآ]', 'ا', text).replace('ة', 'ه').replace('ى', 'ي')
-    return re.sub(r'\s+', ' ', re.sub(r'[-_,\.]', ' ', text)).strip()
+    """Normalize Arabic/English headers consistently using the lightweight helper."""
+    return normalize_arabic_text(text)
 
 class DynamicExcelProcessor:
     def __init__(self, file_path, db):
