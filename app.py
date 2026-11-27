@@ -399,6 +399,7 @@ class MainWindow(QMainWindow):
 
     def open_academic_reports(self):
         from academic_reports import REPORTS, build_academic_report
+        from extended_reports import REPORTS as EXTENDED_REPORTS, build_extended_report
         dialog = QDialog(self)
         dialog.setWindowTitle("التقارير الأكاديمية")
         dialog.resize(1050, 650)
@@ -406,6 +407,9 @@ class MainWindow(QMainWindow):
         controls = QHBoxLayout()
         report_box = QComboBox()
         for key, title in REPORTS.items():
+            report_box.addItem(title, key)
+        report_box.insertSeparator(report_box.count())
+        for key, title in EXTENDED_REPORTS.items():
             report_box.addItem(title, key)
         search_box = QLineEdit()
         search_box.setPlaceholderText("بحث بالاسم أو الكود أو الرقم القومي أو ملف المصدر")
@@ -426,15 +430,23 @@ class MainWindow(QMainWindow):
         layout.addWidget(buttons)
         state = {"rows": [], "title": ""}
         def refresh():
-            title, rows, summary = build_academic_report(
-                self.student_db, report_box.currentData(), search_box.text()
-            )
+            report_type = report_box.currentData()
+            if report_type in REPORTS:
+                title, rows, summary = build_academic_report(
+                    self.student_db, report_type, search_box.text()
+                )
+                summary_text = (
+                    "النتائج: " + str(summary["total"]) + " | وافدون: " + str(summary["expatriates"]) +
+                    " | غير وافدين: " + str(summary["local"]) + " | أسماء ناقصة: " + str(summary["missing_name"]) +
+                    " | أكواد ناقصة: " + str(summary["missing_code"]) + " | معرفات ناقصة: " + str(summary["missing_national_id"])
+                )
+            else:
+                title, rows, summary = build_extended_report(
+                    self.student_db, report_type, search_box.text()
+                )
+                summary_text = "إجمالي النتائج: " + str(summary["total"]) + " (الحد الأقصى للفحص: " + str(summary["limited_to"]) + ")"
             state["rows"], state["title"] = rows, title
-            summary_label.setText(
-                f"إجمالي النتائج: {summary['total']} | وافدون: {summary['expatriates']} | "
-                f"غير وافدين: {summary['local']} | أسماء ناقصة: {summary['missing_name']} | "
-                f"أكواد ناقصة: {summary['missing_code']} | معرفات ناقصة: {summary['missing_national_id']}"
-            )
+            summary_label.setText(summary_text)
             headers = list(rows[0].keys()) if rows else []
             table.clear()
             table.setColumnCount(len(headers))
