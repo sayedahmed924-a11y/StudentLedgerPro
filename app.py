@@ -279,11 +279,14 @@ class DynamicExcelProcessor:
             })
             auto_serial += 1
 
+        from excel_intelligence import find_duplicate_candidates
+        duplicate_candidates = find_duplicate_candidates(students)
         return {
             'title': title or "سجل قيد الطلاب المعتمد",
             'columns': [c['name'] for c in self.all_columns],
             'classified_fields': self.classified_fields,
             'students': students,
+            'duplicate_candidates': duplicate_candidates,
             'excel_detection': self.detection,
             'source_sheet': self.sheet_name
         }
@@ -409,6 +412,8 @@ class MainWindow(QMainWindow):
                 f"صف العناوين: {processor.header_row + 1}\\n"
                 f"الخلايا المدمجة التي تم توسيعها: {merged_count}\\n"
                 f"أنماط محتوى تحتاج مراجعة: {len(hints)}\\n"
+                f"الجداول المكتشفة في الورقة: {detection.get('tables_detected', 0)}\\n"
+                f"مجموعات التكرار المرشحة للمراجعة: {len(result.get('duplicate_candidates', []))}\\n"
                 f"عناوين جديدة تم تعلمها بثقة مرتفعة: {learning['learned']}\\n"
                 f"إجمالي العناوين المتعلمة: {learning['memory']['aliases']}\\n"
                 f"مرات الاستفادة والتأكيد: {learning['memory']['observations']}\\n\\n"
