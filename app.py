@@ -350,6 +350,10 @@ class PythonBridge(QObject):
     def requestPrint(self):
         self.win.print_in_browser()
 
+    @pyqtSlot(str, str)
+    def requestLearnAlias(self, field_name, column_name):
+        self.win.learn_alias(field_name, column_name)
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -400,6 +404,13 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "تعذر قراءة ملف Excel",
                 "لم يتم تحميل الملف. تأكد أن الملف سليم وغير مفتوح بطريقة تمنع قراءته، "
                 "وأنه بصيغة XLSX أو XLS.\n\nالتفاصيل: " + str(exc))
+
+    def learn_alias(self, field_name, column_name):
+        if field_name not in ONTOLOGY_RULES or not column_name:
+            return
+        self.db.remember_alias(field_name, column_name, 1.0)
+        QMessageBox.information(self, "تم حفظ التصحيح",
+            f"تم حفظ أن عمود «{column_name}» يمثل الحقل المحدد. سيُستخدم هذا التعلم في الملفات القادمة.")
 
     def export_clean_excel(self):
         if not self.current_data: return
@@ -540,6 +551,7 @@ window.addEventListener('load', function () {
             <button class="btn btn-success" id="btnPrint" onclick="confirmPrintReview()" disabled><span>🖨️</span> مراجعة ثم طباعة</button>
             <button class="btn btn-primary" id="btnExportExcel" onclick="pyBridge.requestExportExcel('')" disabled><span>📊</span> تصدير إكسيل مُنظف</button>
             <button class="btn btn-primary" id="btnAuditReport" onclick="showAuditReport()" disabled><span>📋</span> تقرير المراجعة</button>
+            <button class="btn btn-primary" id="btnLearnMapping" onclick="correctColumnMapping()" disabled><span>🧠</span> تصحيح التعرف الذكي</button>
         </div>
     </div>
 </div>
@@ -582,6 +594,30 @@ window.addEventListener('load', function () {
         ['code','name','nationalId','seatingNo'].forEach(field => {{ const i = Number(fields[field]); if (Number.isInteger(i) && i >= 0 && i < globalData.columns.length && !result.includes(i)) result.push(i); }});
         return result;
     }}
+    function correctColumnMapping() {{
+        if (!globalData || !pyBridge) return;
+        const fields = [
+            ['name','اسم الطالب'], ['code','كود الطالب'], ['nationalId','الرقم القومي / جواز السفر'],
+            ['seatingNo','رقم الجلوس'], ['militaryStatus','الموقف من التجنيد'], ['tripleNo','الرقم الثلاثي']
+        ];
+        const list = globalData.columns.map((name, i) => (i + 1) + ' - ' + name).join('\\n');
+        for (const field of fields) {{
+            const current = globalData.classified_fields[field[0]];
+            const answer = window.prompt('اختر رقم العمود الصحيح للحقل: ' + field[1] + '\\nاكتب 0 لتخطيه.\\n\\n' + list, current >= 0 ? String(current + 1) : '0');
+            if (answer === null) break;
+            const chosen = parseInt(answer, 10);
+            if (chosen === 0) continue;
+            if (!Number.isInteger(chosen) || chosen < 1 || chosen > globalData.columns.length) {{
+                window.alert('رقم العمود غير صحيح، تم تخطي هذا الحقل.');
+                continue;
+            }}
+            pyBridge.requestLearnAlias(field[0], globalData.columns[chosen - 1]);
+            globalData.classified_fields[field[0]] = chosen - 1;
+        }}
+        renderDynamicLedger();
+        window.alert('تم حفظ التصحيحات المختارة لاستخدامها عند استيراد ملفات Excel القادمة.');
+    }}
+
     function showAuditReport() {{
         if (!globalData) return;
         const counts = {{}};
@@ -626,6 +662,7 @@ window.addEventListener('load', function () {
         document.getElementById('btnPrint').disabled = false;
         document.getElementById('btnExportExcel').disabled = false;
         document.getElementById('btnAuditReport').disabled = false;
+        document.getElementById('btnLearnMapping').disabled = false;
         updateCards();
         renderDynamicLedger();
     }}
