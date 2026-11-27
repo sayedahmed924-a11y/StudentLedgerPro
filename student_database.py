@@ -121,6 +121,20 @@ class StudentDatabase:
                 )
             """)
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_mapping_corrections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    field_name TEXT NOT NULL,
+                    alias TEXT NOT NULL COLLATE NOCASE,
+                    file_extension TEXT NOT NULL,
+                    sheet_name TEXT NOT NULL,
+                    corrected_by TEXT NOT NULL DEFAULT '',
+                    confirmation_count INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_confirmed TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(field_name, alias, file_extension, sheet_name)
+                )
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS semantic_memory (
                     field_name TEXT NOT NULL,
                     alias TEXT NOT NULL COLLATE NOCASE,
@@ -244,6 +258,50 @@ class StudentDatabase:
             ).fetchone()
         return {"aliases": int(row["aliases"]), "observations": int(row["observations"])}
 
+
+
+    def remember_user_mapping_correction(self, field: str, alias: str,
+                                         file_extension: str, sheet_name: str,
+                                         corrected_by: str = "") -> bool:
+        """Persist an explicit human correction scoped to this workbook type and sheet."""
+        field, alias = str(field).strip(), str(alias).strip()
+        extension = str(file_extension).lower().strip()
+        sheet = str(sheet_name).strip()
+        if not all((field, alias, extension, sheet)):
+            return False
+        with self._connection() as conn:
+            conn.execute("""
+                INSERT INTO user_mapping_corrections
+                    (field_name,alias,file_extension,sheet_name,corrected_by)
+                VALUES (?,?,?,?,?)
+                ON CONFLICT(field_name,alias,file_extension,sheet_name) DO UPDATE SET
+                    confirmation_count=confirmation_count+1,
+                    corrected_by=excluded.corrected_by,
+                    last_confirmed=CURRENT_TIMESTAMP
+            """, (field, alias, extension, sheet, str(corrected_by)))
+        return True
+
+    def get_user_mapping_corrections(self, field: str,
+                                     file_extension: str, sheet_name: str) -> dict[str, float]:
+        with self._connection() as conn:
+            rows = conn.execute("""
+                SELECT alias,confirmation_count FROM user_mapping_corrections
+                WHERE field_name=? AND file_extension=? AND sheet_name=?
+                ORDER BY confirmation_count DESC,last_confirmed DESC
+            """, (str(field), str(file_extension).lower().strip(), str(sheet_name).strip())).fetchall()
+        # A scoped, explicit human correction is strong evidence, but not an unconditional command.
+        return {row["alias"]: min(0.98, 0.90 + 0.02 * min(int(row["confirmation_count"])-1, 4))
+                for row in rows}
+
+    def mapping_correction_stats(self) -> dict[str, int]:
+        with self._connection() as conn:
+            row = conn.execute("""
+                SELECT COUNT(*) AS corrections,
+                       COALESCE(SUM(confirmation_count),0) AS confirmations
+                FROM user_mapping_corrections
+            """).fetchone()
+        return {"corrections": int(row["corrections"]),
+                "confirmations": int(row["confirmations"])}
 
     @staticmethod
     def _profile_hash(file_extension: str, sheet_name: str, headers: list[str]) -> tuple[str, str]:
