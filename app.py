@@ -455,6 +455,17 @@ class MainWindow(QMainWindow):
                 all_students, source_file="MULTI-WORKBOOK",
                 source_sheet="متعدد الأوراق والملفات"
             )
+            academic_period, period_ok = QInputDialog.getText(
+                self, "الفترة الدراسية",
+                "أدخل العام أو الفترة الدراسية لحفظ سجل تاريخي (مثال: 2026/2027)\\n"
+                "اتركه فارغاً لتخطي التتبع التاريخي:",
+            )
+            if not period_ok:
+                academic_period = ""
+            history_findings = (
+                self.student_db.compare_student_history(all_students, academic_period)
+                if academic_period.strip() else []
+            )
             answer_text = (
                 f"عدد الملفات المقروءة: {len(workbook_results)}\\n"
                 f"عدد السجلات: {preview['row_count']}\\n"
@@ -463,7 +474,8 @@ class MainWindow(QMainWindow):
                 f"سجلات تحتاج مراجعة حقول أساسية: {preview['warning_count']}\\n"
                 f"أنماط ملفات سابقة متشابهة: {sum(1 for book in workbook_results if book['profile_hints'] and book['profile_hints'][0]['similarity'] >= 0.5)}\\n"
                 f"تعيينات أعمدة تحتاج مراجعة: {sum(book['mapping_summary']['review_count'] for book in workbook_results)}\\n"
-                f"نتائج التدقيق: أخطاء {audit['severity_counts']['error']}، تحذيرات {audit['severity_counts']['warning']}، ملاحظات {audit['severity_counts']['info']}\\n\\n"
+                f"نتائج التدقيق: أخطاء {audit['severity_counts']['error']}، تحذيرات {audit['severity_counts']['warning']}، ملاحظات {audit['severity_counts']['info']}\\n"
+                f"تغيرات تاريخية مكتشفة: {len(history_findings)}\\n\\n"
                 "المطابقة تعتمد على كود الطالب أو الرقم القومي بعد توحيد الأرقام.\\n"
                 "لن يتم دمج السجلات أو حذفها تلقائياً.\\n"
             )
@@ -485,6 +497,13 @@ class MainWindow(QMainWindow):
             ]
             if audit_lines:
                 answer_text += "\\n\\nنتائج التدقيق التي تستحق المراجعة:\\n" + "\\n".join(audit_lines[:15])
+            history_lines = [
+                f"{item['message']}: {item['old_value']} ← {item['new_value']} "
+                f"(الفترة السابقة: {item['previous_period']}، المصدر: {item['source_file']})"
+                for item in history_findings
+            ]
+            if history_lines:
+                answer_text += "\\n\\nتغيرات مقارنة بالفترات السابقة:\\n" + "\\n".join(history_lines[:12])
             if failures:
                 answer_text += "\\nملفات لم تُقرأ بالكامل:\\n" + "\\n".join(failures[:8])
             answer_text += "\\nهل تريد اعتماد استيراد السجلات المكتشفة؟"
@@ -533,7 +552,11 @@ class MainWindow(QMainWindow):
                          if student.get("sourceFile") == book["file"]]
                 try:
                     if batch:
-                        self.student_db.import_students(batch, book["file"])
+                        batch_id = self.student_db.import_students(batch, book["file"])
+                        if academic_period.strip():
+                            self.student_db.record_student_history(
+                                batch, academic_period.strip(), book["file"], batch_id
+                            )
                         self.student_db.log_activity(
                             self.current_user["username"], "IMPORT_BATCH", book["file"]
                         )
@@ -565,6 +588,8 @@ class MainWindow(QMainWindow):
                 f"تأكيدات الاستيراد المتراكمة: {memory_stats['confirmations']}\\n"
                 f"تصحيحات الأعمدة التي تم تعلمها: {learned_corrections}\\n"
                 f"إجمالي التصحيحات المحفوظة: {self.student_db.mapping_correction_stats()['corrections']}\\n"
+                f"السجلات المضافة للسجل التاريخي: {sum(1 for student in approved if academic_period.strip() and (self.student_db._history_normalize(student.get('nationalId')) or self.student_db._history_normalize(student.get('code'))))}\\n"
+                f"الفترة الدراسية: {academic_period.strip() or 'غير محددة'}\\n"
                 f"ملفات تعذر حفظها: {len(import_errors)}"
             )
             if import_errors:

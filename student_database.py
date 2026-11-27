@@ -54,6 +54,24 @@ class StudentDatabase:
         with self._connection() as conn:
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS student_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    identity_key TEXT NOT NULL,
+                    identity_type TEXT NOT NULL,
+                    academic_period TEXT NOT NULL,
+                    student_name TEXT NOT NULL DEFAULT '',
+                    student_code TEXT NOT NULL DEFAULT '',
+                    national_id TEXT NOT NULL DEFAULT '',
+                    source_file TEXT NOT NULL DEFAULT '',
+                    source_sheet TEXT NOT NULL DEFAULT '',
+                    source_row TEXT NOT NULL DEFAULT '',
+                    import_batch_id INTEGER,
+                    recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_student_history_identity ON student_history(identity_key, academic_period)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_student_history_period ON student_history(academic_period)")
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS students (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL DEFAULT '',
@@ -476,6 +494,102 @@ class StudentDatabase:
     def count_students(self) -> int:
         with self._connection() as conn:
             return int(conn.execute("SELECT COUNT(*) FROM students").fetchone()[0])
+
+
+    @staticmethod
+    def _history_normalize(value: Any) -> str:
+        import re
+        text = str(value or "").strip().translate(str.maketrans(
+            "٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789"
+        ))
+        return re.sub(r"[^0-9A-Za-zء-ي]", "", text).casefold()
+
+    def record_student_history(self, students: list[dict[str, Any]], academic_period: str,
+                               source_file: str, import_batch_id: int | None = None) -> dict[str, int]:
+        """Append snapshots only after a successful import; never overwrites prior history."""
+        period = str(academic_period or "").strip()
+        if not period:
+            return {"recorded": 0, "code_changes": 0, "name_changes": 0}
+        changes = self.compare_student_history(students, period)
+        recorded = 0
+        with self._connection() as conn:
+            for student in students:
+                nid = self._history_normalize(student.get("nationalId"))
+                code = self._history_normalize(student.get("code"))
+                key_type, identity = ("national_id", nid) if nid else ("student_code", code)
+                if not identity:
+                    continue
+                conn.execute("""
+                    INSERT INTO student_history
+                    (identity_key,identity_type,academic_period,student_name,student_code,
+                     national_id,source_file,source_sheet,source_row,import_batch_id)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)
+                """, (
+                    identity, key_type, period, str(student.get("name") or ""),
+                    str(student.get("code") or ""), str(student.get("nationalId") or ""),
+                    str(source_file), str(student.get("sourceSheet") or ""),
+                    str(student.get("sourceRow") or ""), import_batch_id
+                ))
+                recorded += 1
+        return {
+            "recorded": recorded,
+            "code_changes": sum(1 for item in changes if item["type"] == "code_changed"),
+            "name_changes": sum(1 for item in changes if item["type"] == "name_changed"),
+        }
+
+    def compare_student_history(self, students: list[dict[str, Any]],
+                                academic_period: str = "") -> list[dict[str, Any]]:
+        """Compare incoming students to their latest earlier snapshot using stable national ID."""
+        findings = []
+        with self._connection() as conn:
+            for student in students:
+                nid = self._history_normalize(student.get("nationalId"))
+                code = self._history_normalize(student.get("code"))
+                key_type, identity = ("national_id", nid) if nid else ("student_code", code)
+                if not identity:
+                    continue
+                params: list[Any] = [identity, key_type]
+                period_clause = ""
+                if academic_period:
+                    period_clause = " AND academic_period <> ?"
+                    params.append(str(academic_period).strip())
+                previous = conn.execute(f"""
+                    SELECT * FROM student_history
+                    WHERE identity_key=? AND identity_type=? {period_clause}
+                    ORDER BY recorded_at DESC,id DESC LIMIT 1
+                """, params).fetchone()
+                if not previous:
+                    continue
+                old_code = self._history_normalize(previous["student_code"])
+                old_name = self._history_normalize(previous["student_name"])
+                if code and old_code and code != old_code:
+                    findings.append({
+                        "type": "code_changed", "severity": "warning",
+                        "message": "كود الطالب تغير مقارنة بسجل سابق",
+                        "old_value": previous["student_code"], "new_value": student.get("code", ""),
+                        "previous_period": previous["academic_period"],
+                        "source_file": previous["source_file"], "student_name": student.get("name", ""),
+                    })
+                if self._history_normalize(student.get("name")) and old_name and self._history_normalize(student.get("name")) != old_name:
+                    findings.append({
+                        "type": "name_changed", "severity": "warning",
+                        "message": "اسم الطالب تغير مقارنة بسجل سابق",
+                        "old_value": previous["student_name"], "new_value": student.get("name", ""),
+                        "previous_period": previous["academic_period"],
+                        "source_file": previous["source_file"], "student_name": student.get("name", ""),
+                    })
+        return findings
+
+    def get_student_history(self, identity: str) -> list[dict[str, Any]]:
+        key = self._history_normalize(identity)
+        with self._connection() as conn:
+            rows = conn.execute("""
+                SELECT academic_period,student_name,student_code,national_id,
+                       source_file,source_sheet,source_row,recorded_at
+                FROM student_history
+                WHERE identity_key=? ORDER BY recorded_at,id
+            """, (key,)).fetchall()
+        return [dict(row) for row in rows]
 
     def backup(self, destination: str | os.PathLike) -> str:
         target = Path(destination)
