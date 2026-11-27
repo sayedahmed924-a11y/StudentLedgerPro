@@ -382,7 +382,8 @@ class MainWindow(QMainWindow):
         self.bridge = PythonBridge(self)
         self.channel.registerObject("pyBridge", self.bridge)
         self.browser.page().setWebChannel(self.channel)
-        self.browser.setHtml(self.get_html())
+        # عنوان أساس ثابت يمنح واجهة WebEngine أصلاً محلياً مستقراً لتخزين إعدادات المستخدم.
+        self.browser.setHtml(self.get_html(), QUrl.fromLocalFile(get_app_directory() + os.sep))
 
     def open_excel_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "📂 اختر ملف إكسيل الطلاب", "", "Excel Files (*.xlsx *.xls)")
