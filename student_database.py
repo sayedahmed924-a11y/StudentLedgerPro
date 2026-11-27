@@ -9,23 +9,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from portable_storage import resolve_database_path
+
 
 def default_database_path() -> Path:
-    """Prefer the folder beside the running EXE/source for portable deployments."""
+    """Use the EXE/source folder when writable; safely migrate legacy AppData DB."""
     app_dir = Path(os.path.dirname(os.path.abspath(
         sys.executable if getattr(sys, "frozen", False) else __file__
     )))
     fallback = Path(os.environ.get("APPDATA", str(Path.home()))) / "StudentLedgerPro"
-    for base in (app_dir, fallback):
-        try:
-            base.mkdir(parents=True, exist_ok=True)
-            probe = base / ".studentledgerpro_write_test"
-            probe.write_text("ok", encoding="utf-8")
-            probe.unlink()
-            return base / "student_ledger.sqlite3"
-        except OSError:
-            continue
-    raise OSError("لا توجد صلاحية كتابة في مجلد البرنامج أو مجلد بيانات المستخدم.")
+    return resolve_database_path("student_ledger.sqlite3", app_dir, fallback)
 
 
 class StudentDatabase:

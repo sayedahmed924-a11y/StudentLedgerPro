@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QInputDialog
 )
 from student_database import StudentDatabase
+from portable_storage import resolve_database_path
 from PyQt6.QtCore import Qt, QObject, pyqtSlot
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -58,23 +59,15 @@ def get_resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 def get_app_data_directory():
-    """Prefer a portable writable folder beside the EXE/source; fall back safely."""
-    app_dir = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
-    candidates = [
-        app_dir,
-        os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "StudentLedgerPro"),
-    ]
-    for directory in candidates:
-        try:
-            os.makedirs(directory, exist_ok=True)
-            probe = os.path.join(directory, ".studentledgerpro_write_test")
-            with open(probe, "w", encoding="utf-8") as handle:
-                handle.write("ok")
-            os.remove(probe)
-            return directory
-        except OSError:
-            continue
-    raise OSError("لا توجد صلاحية كتابة في مجلد البرنامج أو مجلد بيانات المستخدم.")
+    """Resolve the portable data folder and migrate the old learning DB safely."""
+    app_dir = os.path.dirname(os.path.abspath(
+        sys.executable if getattr(sys, "frozen", False) else __file__
+    ))
+    fallback = os.path.join(
+        os.environ.get("APPDATA", os.path.expanduser("~")), "StudentLedgerPro"
+    )
+    # The helper selects the writable directory and preserves any legacy DB.
+    return str(resolve_database_path("semantic_learning.sqlite3", app_dir, fallback).parent)
 
 
 class SmartMemoryDB:
