@@ -180,13 +180,12 @@ def load_best_sheet(file_path: str, ontology: Dict, learned: Dict | None = None,
                 )
             except Exception:
                 continue
-            row_index, confidence, matches = detect_header_row(
+            row_index, header_depth, confidence, matches = detect_header_structure(
                 preview, ontology, learned, scan_rows
             )
-            score, _ = _header_score(
-                preview.iloc[row_index].tolist(), ontology, learned
-            ) if not preview.empty else (0, 0)
-            candidate = (score, matches, sheet_name, row_index, confidence)
+            header_values = compose_header_values(preview, row_index, header_depth) if not preview.empty else []
+            score, _ = _header_score(header_values, ontology, learned) if header_values else (0, 0)
+            candidate = (score, matches, sheet_name, row_index, confidence, header_depth)
             if winner is None or candidate[:2] > winner[:2]:
                 winner = candidate
 
