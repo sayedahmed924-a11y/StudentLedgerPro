@@ -19,7 +19,7 @@ jobs:
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install PyQt6 PyQt6-WebEngine pandas openpyxl rapidfuzz pyinstaller
+        pip install PyQt6 PyQt6-WebEngine pandas openpyxl xlrd rapidfuzz pyinstaller
 
     - name: Build Application with PyInstaller
       run: |
