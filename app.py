@@ -177,7 +177,7 @@ class DynamicExcelProcessor:
                 pattern = re.compile(spec['regex']) if spec.get('regex') else None
                 r_score = (
                     sum(1 for value in vals
-                        if pattern.search(str(value).split('\\n')[0].strip()))
+                        if pattern.search(str(value).split('\n')[0].strip()))
                     / max(1, len(vals)) * 100.0
                 ) if pattern and vals else 0.0
                 combined = (h_score * 0.5) + (r_score * 0.5)
