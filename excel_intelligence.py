@@ -163,6 +163,7 @@ def expand_merged_cells(file_path: str, sheet_name: str, frame: pd.DataFrame):
     in the in-memory dataframe helps multi-row headings without modifying source.
     Unsupported formats safely return the original dataframe.
     """
+    frame = frame.copy(deep=True)
     try:
         from openpyxl import load_workbook
         workbook = load_workbook(file_path, read_only=False, data_only=True)
