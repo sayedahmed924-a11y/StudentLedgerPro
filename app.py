@@ -330,6 +330,10 @@ class PythonBridge(QObject):
     def requestCustomReports(self):
         self.win.open_custom_report_builder()
 
+    @pyqtSlot()
+    def requestDatabaseSafety(self):
+        self.win.open_database_safety()
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -902,6 +906,95 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "تعذر تحليل ملفات Excel",
                                  f"حدث خطأ أثناء معالجة الملفات:\\n{exc}")
 
+    def open_database_safety(self):
+        from database_safety import (
+            inspect_database, create_verified_backup, restore_verified_backup
+        )
+        dialog = QDialog(self)
+        dialog.setWindowTitle("حماية قاعدة البيانات والنسخ الاحتياطي")
+        dialog.resize(720, 430)
+        layout = QVBoxLayout(dialog)
+        info = QLabel("فحص سلامة SQLite وإنشاء نسخة احتياطية موثقة أو استعادة نسخة سليمة. قبل الاستعادة تُنشأ نسخة أمان تلقائياً.")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+        status = QLabel("اضغط فحص قاعدة البيانات لعرض الحالة الحالية.")
+        status.setWordWrap(True)
+        layout.addWidget(status)
+
+        def inspect():
+            try:
+                report = inspect_database(self.student_db)
+                counts = report["counts"]
+                status.setText(
+                    "سلامة القاعدة: " + report["integrity"] +
+                    " | الحجم: " + str(round(report["size_bytes"] / 1024, 1)) + " KB" +
+                    " | وضع التشغيل: " + report["journal_mode"] + "\\n" +
+                    "الطلاب: " + str(counts.get("students", 0)) +
+                    " | المستخدمون: " + str(counts.get("app_users", 0)) +
+                    " | دفعات الاستيراد: " + str(counts.get("import_batches", 0))
+                )
+            except Exception as exc:
+                QMessageBox.critical(dialog, "فشل الفحص", str(exc))
+
+        def backup():
+            path, _ = QFileDialog.getSaveFileName(
+                dialog, "حفظ نسخة احتياطية", "StudentLedgerPro_backup.sqlite3",
+                "SQLite Database (*.sqlite3 *.db)"
+            )
+            if not path:
+                return
+            try:
+                report = create_verified_backup(self.student_db, path)
+                QMessageBox.information(
+                    dialog, "نسخة احتياطية موثقة",
+                    "تم إنشاء النسخة وفحص سلامتها بنجاح.\nعدد الجداول: " +
+                    str(report["tables"]) + "\\nالمسار: " + path
+                )
+            except Exception as exc:
+                QMessageBox.critical(dialog, "فشل النسخ الاحتياطي", str(exc))
+
+        def restore():
+            path, _ = QFileDialog.getOpenFileName(
+                dialog, "اختيار نسخة للاستعادة", "",
+                "SQLite Database (*.sqlite3 *.db)"
+            )
+            if not path:
+                return
+            answer = QMessageBox.warning(
+                dialog, "تأكيد الاستعادة",
+                "سيتم استبدال بيانات قاعدة العمل بالنسخة المختارة. ستُحفظ نسخة أمان من الوضع الحالي تلقائياً. هل تريد المتابعة؟",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            try:
+                report = restore_verified_backup(self.student_db, path)
+                QMessageBox.information(
+                    dialog, "تمت الاستعادة",
+                    "تمت الاستعادة واجتاز الملف فحص السلامة.\nنسخة الأمان: " +
+                    report["safety_backup"] +
+                    "\\nيفضل إعادة تشغيل البرنامج لتحديث كل الشاشات."
+                )
+                inspect()
+            except Exception as exc:
+                QMessageBox.critical(dialog, "تعذر الاستعادة", str(exc))
+
+        buttons = QHBoxLayout()
+        inspect_btn = QPushButton("فحص قاعدة البيانات")
+        backup_btn = QPushButton("إنشاء نسخة احتياطية")
+        restore_btn = QPushButton("استعادة نسخة")
+        close_btn = QPushButton("إغلاق")
+        for button in (inspect_btn, backup_btn, restore_btn, close_btn):
+            buttons.addWidget(button)
+        layout.addLayout(buttons)
+        inspect_btn.clicked.connect(inspect)
+        backup_btn.clicked.connect(backup)
+        restore_btn.clicked.connect(restore)
+        close_btn.clicked.connect(dialog.accept)
+        inspect()
+        dialog.exec()
+
     def open_database_manager(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("إدارة قاعدة بيانات الطلاب")
@@ -1224,6 +1317,7 @@ class MainWindow(QMainWindow):
             <button class="btn" id="btnDatabase" onclick="pyBridge.requestDatabaseManager()"><span>🗄️</span> قاعدة بيانات الطلاب</button>
             <button class="btn btn-primary" id="btnAcademicReports" onclick="pyBridge.requestAcademicReports()"><span>📊</span> التقارير الأكاديمية</button>
             <button class="btn" id="btnCustomReports" onclick="pyBridge.requestCustomReports()"><span>🧩</span> منشئ التقارير المخصصة</button>
+            <button class="btn" id="btnDatabaseSafety" onclick="pyBridge.requestDatabaseSafety()"><span>🛡️</span> حماية ونسخ قاعدة البيانات</button>
         </div>
     </div>
 </div>
