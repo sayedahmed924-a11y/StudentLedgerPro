@@ -275,6 +275,7 @@ def load_best_sheet(file_path: str, ontology: Dict, learned: Dict | None = None,
                 )
             except Exception:
                 continue
+            preview, _ = expand_merged_cells(file_path, sheet_name, preview)
             row_index, header_depth, confidence, matches = detect_header_structure(
                 preview, ontology, learned, scan_rows
             )
