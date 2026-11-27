@@ -41,6 +41,21 @@ class StudentDatabaseTests(unittest.TestCase):
         self.db.log_activity("admin", "IMPORT", "sample.xlsx")
         self.assertEqual(self.db.recent_activity()[0]["action"], "IMPORT")
 
+    def test_semantic_learning_persists_and_reinforces_confidence(self):
+        self.assertFalse(self.db.remember_semantic_mapping("name", "uncertain", 0.60))
+        self.assertTrue(self.db.remember_semantic_mapping("name", "student name", 0.90))
+        self.assertAlmostEqual(self.db.get_semantic_aliases("name")["student name"], 0.90)
+        self.assertTrue(self.db.remember_semantic_mapping("name", "student name", 0.80))
+        self.assertAlmostEqual(self.db.get_semantic_aliases("name")["student name"], 0.85)
+        stats = self.db.semantic_memory_stats()
+        self.assertEqual(stats["aliases"], 1)
+        self.assertEqual(stats["observations"], 2)
+
+    def test_semantic_learning_survives_database_reopen(self):
+        self.db.remember_semantic_mapping("code", "student code", 0.95)
+        reopened = StudentDatabase(self.db.path)
+        self.assertIn("student code", reopened.get_semantic_aliases("code"))
+
 
 if __name__ == "__main__":
     unittest.main()
