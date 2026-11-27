@@ -326,6 +326,10 @@ class PythonBridge(QObject):
     def requestAcademicReports(self):
         self.win.open_academic_reports()
 
+    @pyqtSlot()
+    def requestCustomReports(self):
+        self.win.open_custom_report_builder()
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
