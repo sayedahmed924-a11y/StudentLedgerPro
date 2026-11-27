@@ -80,6 +80,81 @@ def detect_header_row(frame: pd.DataFrame, ontology: Dict, learned: Dict | None 
     return best[1], confidence, best[2]
 
 
+
+def detect_header_structure(frame: pd.DataFrame, ontology: Dict, learned: Dict | None = None,
+                            scan_rows: int = 60) -> Tuple[int, int, float, int]:
+    """Find one- or two-row headers, including split words across stacked rows."""
+    if frame is None or frame.empty:
+        return 0, 1, 0.0, 0
+    best = (0.0, 0, 1, 0)
+    limit = min(scan_rows, len(frame))
+    for row_index in range(limit):
+        variants = [(1, frame.iloc[row_index].tolist())]
+        if row_index + 1 < limit:
+            upper = frame.iloc[row_index].tolist()
+            lower = frame.iloc[row_index + 1].tolist()
+            width = max(len(upper), len(lower))
+            combined = []
+            for col in range(width):
+                a = normalize_header(upper[col]) if col < len(upper) else ""
+                b = normalize_header(lower[col]) if col < len(lower) else ""
+                combined.append(" ".join(part for part in (a, b) if part))
+            variants.append((2, combined))
+        for depth, values in variants:
+            score, matches = _header_score(values, ontology, learned)
+            nonempty = sum(1 for value in values if normalize_header(value))
+            score += min(nonempty, 15) * 0.15
+            # Prefer the shorter header when evidence is effectively tied.
+            candidate = (score, row_index, depth, matches)
+            if (candidate[0], candidate[3], -candidate[2]) > (best[0], best[3], -best[2]):
+                best = candidate
+    confidence = min(1.0, best[0] / 260.0) if best[3] else 0.0
+    return best[1], best[2], confidence, best[3]
+
+
+def compose_header_values(frame: pd.DataFrame, header_row: int, depth: int = 1):
+    """Compose stacked header cells while preserving the source dataframe."""
+    rows = frame.iloc[header_row:header_row + max(1, depth)]
+    headers = []
+    for col in range(frame.shape[1]):
+        parts = []
+        for value in rows.iloc[:, col].tolist():
+            normalized = normalize_header(value)
+            if normalized and normalized not in parts:
+                parts.append(normalized)
+        headers.append(" ".join(parts))
+    return headers
+
+
+def find_nonempty_regions(frame: pd.DataFrame, start_row: int = 0):
+    """Return contiguous non-empty row regions; blank separators split tables."""
+    regions = []
+    region_start = None
+    for index in range(start_row, len(frame)):
+        row = frame.iloc[index]
+        populated = any(normalize_header(value) for value in row.tolist())
+        if populated and region_start is None:
+            region_start = index
+        elif not populated and region_start is not None:
+            if index - region_start >= 2:
+                regions.append((region_start, index - 1))
+            region_start = None
+    if region_start is not None and len(frame) - region_start >= 2:
+        regions.append((region_start, len(frame) - 1))
+    return regions
+
+
+def is_repeated_header_row(values, headers, ontology: Dict) -> bool:
+    """Recognize a repeated header inside a sheet so it is not imported as a student."""
+    normalized = [normalize_header(v) for v in values]
+    normalized = [v for v in normalized if v]
+    if len(normalized) < 2:
+        return False
+    header_norms = {normalize_header(v) for v in headers if normalize_header(v)}
+    direct = sum(1 for value in normalized if value in header_norms)
+    semantic = _header_score(values, ontology)[1]
+    return direct >= 2 or semantic >= 2
+
 def load_best_sheet(file_path: str, ontology: Dict, learned: Dict | None = None,
                     scan_rows: int = 60):
     """Inspect every worksheet's first rows, then load only the winning sheet fully.
@@ -105,20 +180,19 @@ def load_best_sheet(file_path: str, ontology: Dict, learned: Dict | None = None,
                 )
             except Exception:
                 continue
-            row_index, confidence, matches = detect_header_row(
+            row_index, header_depth, confidence, matches = detect_header_structure(
                 preview, ontology, learned, scan_rows
             )
-            score, _ = _header_score(
-                preview.iloc[row_index].tolist(), ontology, learned
-            ) if not preview.empty else (0, 0)
-            candidate = (score, matches, sheet_name, row_index, confidence)
+            header_values = compose_header_values(preview, row_index, header_depth) if not preview.empty else []
+            score, _ = _header_score(header_values, ontology, learned) if header_values else (0, 0)
+            candidate = (score, matches, sheet_name, row_index, confidence, header_depth)
             if winner is None or candidate[:2] > winner[:2]:
                 winner = candidate
 
         if winner is None:
             raise ValueError("لم يتمكن البرنامج من قراءة أي ورقة عمل في الملف.")
 
-        score, matches, sheet_name, header_row, confidence = winner
+        score, matches, sheet_name, header_row, confidence, header_depth = winner
         try:
             data = pd.read_excel(
                 book, sheet_name=sheet_name, header=None, dtype=str,
@@ -131,11 +205,13 @@ def load_best_sheet(file_path: str, ontology: Dict, learned: Dict | None = None,
         metadata = {
             "sheet_name": sheet_name,
             "header_row": header_row,
+            "header_depth": header_depth,
             "confidence": confidence,
             "matched_fields": matches,
             "score": score,
             "review_required": matches < 2 or confidence < 0.35,
             "available_sheets": list(book.sheet_names),
+            "nonempty_regions": find_nonempty_regions(data, header_row + header_depth),
         }
         return data, sheet_name, header_row, metadata
     finally:
