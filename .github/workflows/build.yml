@@ -1,15 +1,18 @@
 name: Build StudentLedgerPro
 
-on: [push, workflow_dispatch]
+on:
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
-    steps:
-    - uses: actions/checkout@v3
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
 
@@ -18,12 +21,12 @@ jobs:
         python -m pip install --upgrade pip
         pip install PyQt6 PyQt6-WebEngine pandas openpyxl rapidfuzz pyinstaller
 
-    - name: Compile EXE
+    - name: Build Application with PyInstaller
       run: |
         pyinstaller --noconsole --collect-all PyQt6 --collect-all PyQt6_WebEngine --collect-all rapidfuzz --icon=app_icon.ico --name="StudentLedgerPro" app.py
 
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v3
+    - name: Upload Windows EXE
+      uses: actions/upload-artifact@v4
       with:
-        name: StudentLedgerPro-Windows-EXE
+        name: StudentLedgerPro-EXE
         path: dist/
