@@ -18,6 +18,7 @@ def analyze_workbooks(workbooks: Iterable[dict[str, Any]]) -> dict[str, Any]:
     Matches require a strong exact normalized key (student code or national ID).
     Conflicting non-empty values are returned for human review.
     """
+    workbooks = list(workbooks)
     records = []
     for book in workbooks:
         for student in book.get("students", []):
@@ -54,7 +55,7 @@ def analyze_workbooks(workbooks: Iterable[dict[str, Any]]) -> dict[str, Any]:
             "requires_review": True,
         })
     return {
-        "workbook_count": len(list(workbooks)) if not isinstance(workbooks, list) else len(workbooks),
+        "workbook_count": len(workbooks),
         "record_count": len(records),
         "match_group_count": len(groups),
         "conflict_count": sum(1 for group in groups if group["conflict"]),
