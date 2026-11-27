@@ -385,70 +385,112 @@ class MainWindow(QMainWindow):
         return self.current_user and self.current_user["role"] in ("admin", "editor")
 
     def open_excel_dialog(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "📂 اختر ملف إكسيل الطلاب", "", "Excel Files (*.xlsx *.xls)")
-        if not file_path: return
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self, "📂 اختر ملفاً أو عدة ملفات Excel", "",
+            "Excel Files (*.xlsx *.xls)"
+        )
+        if not file_paths:
+            return
         if not self._can_edit():
-            QMessageBox.warning(self, "صلاحية غير كافية", "استيراد الملفات والتعلم من الأعمدة متاحان للمدير والمحرر فقط.")
+            QMessageBox.warning(self, "صلاحية غير كافية",
+                                "استيراد الملفات متاح للمدير والمحرر فقط.")
             return
         try:
-            processor = DynamicExcelProcessor(file_path, self.student_db)
-            result = processor.classify_and_audit()
-            if not result.get('students'):
-                QMessageBox.warning(self, "ملف فارغ", "لم يتم العثور على سجلات طلاب في الملف المحدد.")
-                return
             from excel_import_pipeline import prepare_import_preview, select_preview_rows
+            from workbook_linker import analyze_workbooks
+
+            workbook_results = []
+            processors = []
+            failures = []
+            for file_path in file_paths:
+                try:
+                    processor = DynamicExcelProcessor(file_path, self.student_db)
+                    result = processor.classify_and_audit()
+                    if not result.get("students"):
+                        failures.append(f"{os.path.basename(file_path)}: لا توجد سجلات طلاب")
+                        continue
+                    processors.append(processor)
+                    workbook_results.append({
+                        "file": os.path.basename(file_path),
+                        "sheet": processor.sheet_name,
+                        "students": result.get("students", []),
+                        "result": result,
+                    })
+                except Exception as file_exc:
+                    failures.append(f"{os.path.basename(file_path)}: {file_exc}")
+
+            if not workbook_results:
+                QMessageBox.warning(self, "تعذر الاستيراد",
+                                    "لم يتم العثور على ملفات صالحة.\\n" + "\\n".join(failures))
+                return
+
+            linking = analyze_workbooks(workbook_results)
+            all_students = []
+            for book in workbook_results:
+                for student in book["students"]:
+                    row = dict(student)
+                    row["sourceFile"] = book["file"]
+                    row["sourceSheet"] = book["sheet"]
+                    all_students.append(row)
+
             preview = prepare_import_preview(
-                result.get("students", []),
-                source_file=os.path.basename(file_path),
-                source_sheet=processor.sheet_name,
-                table_index=1,
+                all_students, source_file="MULTI-WORKBOOK",
+                source_sheet="متعدد الأوراق والملفات"
             )
-            duplicate_count = preview["duplicate_group_count"]
-            warning_count = preview["warning_count"]
+            answer_text = (
+                f"عدد الملفات المقروءة: {len(workbook_results)}\\n"
+                f"عدد السجلات: {preview['row_count']}\\n"
+                f"مجموعات الربط بين الملفات: {linking['match_group_count']}\\n"
+                f"مجموعات بها تعارضات: {linking['conflict_count']}\\n"
+                f"سجلات تحتاج مراجعة حقول أساسية: {preview['warning_count']}\\n\\n"
+                "المطابقة تعتمد على كود الطالب أو الرقم القومي بعد توحيد الأرقام.\\n"
+                "لن يتم دمج السجلات أو حذفها تلقائياً.\\n"
+            )
+            if failures:
+                answer_text += "\\nملفات لم تُقرأ بالكامل:\\n" + "\\n".join(failures[:8])
+            answer_text += "\\nهل تريد اعتماد استيراد السجلات المكتشفة؟"
             answer = QMessageBox.question(
-                self,
-                "معاينة واعتماد استيراد Excel",
-                f"عدد السجلات المكتشفة: {preview['row_count']}\\n"
-                f"السجلات التي تحتاج مراجعة: {warning_count}\\n"
-                f"مجموعات الأكواد/الأرقام القومية المكررة: {duplicate_count}\\n\\n"
-                "سيتم الاحتفاظ بمصدر كل سجل وبياناته الأصلية. لن يتم دمج أو حذف أي طالب.\\n"
-                "هل تريد اعتماد استيراد جميع السجلات الآن؟",
+                self, "تحليل وربط عدة ملفات Excel", answer_text,
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
             if answer != QMessageBox.StandardButton.Yes:
                 QMessageBox.information(self, "تم إلغاء الاستيراد",
-                                        "لم يتم حفظ أي سجل في قاعدة البيانات. يمكنك مراجعة الملف ثم إعادة استيراده.")
+                                        "لم يتم حفظ أي سجل في قاعدة البيانات.")
                 return
-            approved_students = select_preview_rows(preview, range(preview["row_count"]))
-            self.current_data = result
-            try:
-                self.student_db.import_students(approved_students, os.path.basename(file_path))
-                self.student_db.log_activity(self.current_user["username"], "IMPORT", os.path.basename(file_path))
-            except Exception as db_exc:
-                QMessageBox.warning(self, "تنبيه قاعدة البيانات",
-                                    f"تم تحميل الملف للفحص، لكن تعذر حفظ نسخة البيانات في SQLite:\\n{db_exc}")
-            learning = processor.learning_summary
-            detection = processor.detection
-            hints = detection.get("content_hints", [])
-            merged_count = detection.get("merged_ranges_expanded", 0)
-            QMessageBox.information(
-                self, "تحليل ملف Excel والتعلم",
-                f"ورقة العمل: {processor.sheet_name}\\n"
-                f"صف العناوين: {processor.header_row + 1}\\n"
-                f"الخلايا المدمجة التي تم توسيعها: {merged_count}\\n"
-                f"أنماط محتوى تحتاج مراجعة: {len(hints)}\\n"
-                f"الجداول المكتشفة في الورقة: {detection.get('tables_detected', 0)}\\n"
-                f"مجموعات التكرار المرشحة للمراجعة: {len(result.get('duplicate_candidates', []))}\\n"
-                f"عناوين جديدة تم تعلمها بثقة مرتفعة: {learning['learned']}\\n"
-                f"إجمالي العناوين المتعلمة: {learning['memory']['aliases']}\\n"
-                f"مرات الاستفادة والتأكيد: {learning['memory']['observations']}\\n\\n"
-                "ملاحظة: أنماط محتوى الأعمدة مؤشرات للمراجعة وليست تعييناً تلقائياً."
+
+            approved = select_preview_rows(preview, range(preview["row_count"]))
+            self.current_data = workbook_results[0]["result"]
+            imported = 0
+            import_errors = []
+            for book in workbook_results:
+                batch = [student for student in approved
+                         if student.get("sourceFile") == book["file"]]
+                try:
+                    if batch:
+                        self.student_db.import_students(batch, book["file"])
+                        self.student_db.log_activity(
+                            self.current_user["username"], "IMPORT_BATCH", book["file"]
+                        )
+                        imported += len(batch)
+                except Exception as db_exc:
+                    import_errors.append(f"{book['file']}: {db_exc}")
+
+            summary = (
+                f"الملفات المقروءة: {len(workbook_results)}\\n"
+                f"السجلات التي تم إرسالها للحفظ: {imported}\\n"
+                f"مجموعات المطابقة: {linking['match_group_count']}\\n"
+                f"التعارضات التي تحتاج مراجعة: {linking['conflict_count']}\\n"
+                f"ملفات تعذر حفظها: {len(import_errors)}"
             )
-            payload = json.dumps(result, ensure_ascii=False).replace("</", "<\\/")
+            if import_errors:
+                summary += "\\n" + "\\n".join(import_errors[:5])
+            QMessageBox.information(self, "نتيجة الاستيراد متعدد الملفات", summary)
+            payload = json.dumps(self.current_data, ensure_ascii=False).replace("</", "<\\/")
             self.browser.page().runJavaScript(f"loadDynamicDataFromPython({payload});")
         except Exception as exc:
-            QMessageBox.critical(self, "تعذر قراءة الملف", f"حدث خطأ أثناء قراءة ملف Excel:\n{exc}")
+            QMessageBox.critical(self, "تعذر تحليل ملفات Excel",
+                                 f"حدث خطأ أثناء معالجة الملفات:\\n{exc}")
 
     def open_database_manager(self):
         dialog = QDialog(self)
