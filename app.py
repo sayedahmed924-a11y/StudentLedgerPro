@@ -613,9 +613,15 @@ window.addEventListener('load', function () {
             }}
             pyBridge.requestLearnAlias(field[0], globalData.columns[chosen - 1]);
             globalData.classified_fields[field[0]] = chosen - 1;
+            globalData.students.forEach(student => {{
+                const value = student.cells[chosen - 1] || '';
+                if (field[0] === 'name') student.name = value || student.name;
+                if (field[0] === 'code') student.code = value;
+                if (field[0] === 'nationalId') student.nationalId = value;
+            }});
         }}
         renderDynamicLedger();
-        window.alert('تم حفظ التصحيحات المختارة لاستخدامها عند استيراد ملفات Excel القادمة.');
+        window.alert('تم حفظ التصحيحات المختارة للملفات القادمة وتحديث العرض الحالي. أعد استيراد الملف لإعادة تشغيل فحوص الرقم القومي والتجنيد على الأعمدة المصححة.');
     }}
 
     function showAuditReport() {{
