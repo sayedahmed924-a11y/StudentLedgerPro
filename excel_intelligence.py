@@ -251,6 +251,128 @@ def find_ambiguous_columns(profiles, threshold: float = 0.65):
                 })
     return hints
 
+
+def normalize_student_value(value: object) -> str:
+    """Canonicalize comparable values while retaining original workbook values elsewhere."""
+    if value is None or pd.isna(value):
+        return ""
+    text = str(value).strip().translate(
+        str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+    )
+    text = re.sub(r"[\\u064B-\\u065F\\u0670\\u0640]", "", text)
+    text = text.translate(str.maketrans("أإآ", "ااا")).replace("ة", "ه").replace("ى", "ي")
+    text = re.sub(r"[^0-9a-zA-Z\\u0621-\\u064A]", "", text.lower())
+    return text
+
+
+def map_header_columns(headers, ontology: Dict, learned: Dict | None = None,
+                       threshold: float = 72):
+    """Map each semantic field to at most one column; never reuse a column."""
+    learned = learned or {}
+    candidates = []
+    for field, spec in ontology.items():
+        aliases = list(spec.get("headers", [])) + list(learned.get(field, {}).keys())
+        for index, header in enumerate(headers):
+            cell = normalize_header(header)
+            best = max((fuzz.ratio(cell, normalize_header(alias)) for alias in aliases
+                        if normalize_header(alias)), default=0)
+            if best >= threshold:
+                candidates.append((best, field, index))
+    result = {}
+    used_columns = set()
+    for score, field, index in sorted(candidates, reverse=True):
+        if field not in result and index not in used_columns:
+            result[field] = {"column_index": index, "score": round(score, 1)}
+            used_columns.add(index)
+    return result
+
+
+def detect_table_candidates(frame: pd.DataFrame, ontology: Dict, learned: Dict | None = None,
+                            min_matches: int = 2, scan_rows: int = 250):
+    """Find separate header+data tables in one sheet, including repeated header blocks."""
+    if frame is None or frame.empty:
+        return []
+    candidates = []
+    limit = min(len(frame), scan_rows)
+    row = 0
+    while row < limit:
+        preview = frame.iloc[row:min(limit, row + 2)].reset_index(drop=True)
+        local_header, depth, confidence, matches = detect_header_structure(
+            preview, ontology, learned, scan_rows=2
+        )
+        # Only accept a header when it starts on this physical row.
+        if local_header != 0 or matches < min_matches:
+            row += 1
+            continue
+        headers = compose_header_values(frame, row, depth)
+        mapping = map_header_columns(headers, ontology, learned)
+        if len(mapping) < min_matches:
+            row += 1
+            continue
+        data_start = row + depth
+        data_end = data_start
+        while data_end < len(frame):
+            values = frame.iloc[data_end].tolist()
+            if not any(normalize_student_value(v) for v in values):
+                break
+            if is_repeated_header_row(values, headers, ontology):
+                break
+            data_end += 1
+        if data_end > data_start:
+            candidates.append({
+                "header_row": row,
+                "header_depth": depth,
+                "data_start": data_start,
+                "data_end": data_end - 1,
+                "confidence": confidence,
+                "matched_fields": matches,
+                "column_mapping": mapping,
+                "headers": headers,
+                "review_required": confidence < 0.35 or len(mapping) < len(ontology),
+            })
+            row = data_end
+        else:
+            row += 1
+    return candidates
+
+
+def find_duplicate_candidates(records, id_field: str = "nationalId",
+                              code_field: str = "code", name_field: str = "name"):
+    """Find deterministic duplicate groups; never merge or delete student records.
+
+    National ID and student code are strong keys. Name alone is intentionally
+    insufficient because different students may share the same name.
+    """
+    groups = []
+    for field, strength in ((id_field, "strong"), (code_field, "strong")):
+        buckets = {}
+        for index, record in enumerate(records):
+            value = normalize_student_value(record.get(field))
+            if value:
+                buckets.setdefault(value, []).append(index)
+        for value, indices in buckets.items():
+            if len(indices) > 1:
+                groups.append({
+                    "field": field, "normalized_value": value,
+                    "record_indices": indices, "strength": strength,
+                    "review_required": True,
+                })
+    # A repeated name is only a weak hint, not a duplicate verdict.
+    name_buckets = {}
+    for index, record in enumerate(records):
+        name = normalize_student_value(record.get(name_field))
+        if name:
+            name_buckets.setdefault(name, []).append(index)
+    for value, indices in name_buckets.items():
+        if len(indices) > 1:
+            groups.append({
+                "field": name_field, "normalized_value": value,
+                "record_indices": indices, "strength": "weak",
+                "review_required": True,
+            })
+    return groups
+
+
 def load_best_sheet(file_path: str, ontology: Dict, learned: Dict | None = None,
                     scan_rows: int = 60):
     """Inspect every worksheet's first rows, then load only the winning sheet fully.
