@@ -487,6 +487,32 @@ class MainWindow(QMainWindow):
                                         "لم يتم حفظ أي سجل في قاعدة البيانات.")
                 return
 
+            # Offer explicit, contextual correction learning for uncertain mappings.
+            learned_corrections = 0
+            for book in workbook_results:
+                headers = list(dict.fromkeys(h for h in book["headers"] if h))
+                for field, detail in book["mapping_summary"]["assignments"].items():
+                    if not detail["review_required"] or not headers:
+                        continue
+                    choices = headers + ["عدم حفظ تصحيح"]
+                    default = detail["header"] if detail["header"] in choices else choices[0]
+                    selected_header, accepted = QInputDialog.getItem(
+                        self, "تصحيح تعيين عمود",
+                        f"اختر العنوان الصحيح للحقل ({field}) في الملف {book['file']}\\n"
+                        "سيُستخدم التصحيح في الملفات القادمة المطابقة لهذا النوع والورقة.",
+                        choices, choices.index(default), False
+                    )
+                    if accepted and selected_header != "عدم حفظ تصحيح":
+                        if self.student_db.remember_user_mapping_correction(
+                            field, selected_header, os.path.splitext(book["file"])[1],
+                            book["sheet"], self.current_user["username"]
+                        ):
+                            learned_corrections += 1
+                            self.student_db.log_activity(
+                                self.current_user["username"], "MAPPING_CORRECTION",
+                                f"{book['file']} | {field} -> {selected_header}"
+                            )
+
             approved = select_preview_rows(preview, range(preview["row_count"]))
             self.current_data = workbook_results[0]["result"]
             imported = 0
@@ -526,6 +552,8 @@ class MainWindow(QMainWindow):
                 f"علاقات الأوراق التي تم تأكيدها: {learned_relationships}\\n"
                 f"أنماط الملفات المحفوظة: {memory_stats['profiles']}\\n"
                 f"تأكيدات الاستيراد المتراكمة: {memory_stats['confirmations']}\\n"
+                f"تصحيحات الأعمدة التي تم تعلمها: {learned_corrections}\\n"
+                f"إجمالي التصحيحات المحفوظة: {self.student_db.mapping_correction_stats()['corrections']}\\n"
                 f"ملفات تعذر حفظها: {len(import_errors)}"
             )
             if import_errors:
