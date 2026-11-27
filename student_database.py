@@ -98,6 +98,16 @@ class StudentDatabase:
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS semantic_memory (
+                    field_name TEXT NOT NULL,
+                    alias TEXT NOT NULL COLLATE NOCASE,
+                    confidence REAL NOT NULL DEFAULT 0.5,
+                    success_count INTEGER NOT NULL DEFAULT 1,
+                    last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (field_name, alias)
+                )
+            """)
 
 
     @staticmethod
@@ -166,6 +176,51 @@ class StudentDatabase:
                 "SELECT username,action,details,created_at FROM activity_log "
                 "ORDER BY id DESC LIMIT ?", (max(1, min(int(limit), 1000)),)
             ).fetchall()]
+
+
+    def get_semantic_aliases(self, field: str) -> dict[str, float]:
+        """Return learned column headings and their confidence for one semantic field."""
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT alias, confidence FROM semantic_memory WHERE field_name=?",
+                (str(field),),
+            ).fetchall()
+        return {row["alias"]: float(row["confidence"]) for row in rows}
+
+    def remember_semantic_mapping(self, field: str, alias: str, confidence: float) -> bool:
+        """Learn a header only when the classifier reports a sufficiently strong match."""
+        field, alias = str(field).strip(), str(alias).strip()
+        confidence = max(0.0, min(float(confidence), 1.0))
+        if not field or not alias or confidence < 0.72:
+            return False
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT confidence, success_count FROM semantic_memory "
+                "WHERE field_name=? AND alias=? COLLATE NOCASE",
+                (field, alias),
+            ).fetchone()
+            if row:
+                count = int(row["success_count"])
+                updated = ((float(row["confidence"]) * count) + confidence) / (count + 1)
+                conn.execute(
+                    "UPDATE semantic_memory SET confidence=?, success_count=success_count+1, "
+                    "last_seen=CURRENT_TIMESTAMP WHERE field_name=? AND alias=? COLLATE NOCASE",
+                    (updated, field, alias),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO semantic_memory(field_name,alias,confidence) VALUES(?,?,?)",
+                    (field, alias, confidence),
+                )
+        return True
+
+    def semantic_memory_stats(self) -> dict[str, int]:
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS aliases, COALESCE(SUM(success_count),0) AS observations "
+                "FROM semantic_memory"
+            ).fetchone()
+        return {"aliases": int(row["aliases"]), "observations": int(row["observations"])}
 
     @staticmethod
     def _student_values(student: dict[str, Any], source_file: str = ""):
