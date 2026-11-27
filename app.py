@@ -101,9 +101,15 @@ class DynamicExcelProcessor:
             field: db.get_semantic_aliases(field)
             for field in ONTOLOGY_RULES
         }
+        self.file_extension = os.path.splitext(file_path)[1].lower()
         self.df, self.sheet_name, self.header_row, self.detection = load_best_sheet(
             file_path, ONTOLOGY_RULES, learned
         )
+        # Explicit employee corrections apply only to the same workbook extension and sheet.
+        for field in ONTOLOGY_RULES:
+            learned[field].update(db.get_user_mapping_corrections(
+                field, self.file_extension, self.sheet_name
+            ))
         self.classified_fields = {}
         self.all_columns = []
 
