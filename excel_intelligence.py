@@ -259,11 +259,11 @@ def normalize_student_value(value: object) -> str:
     text = str(value).strip().translate(
         str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
     )
-    text = re.sub(r"[\\u064B-\\u065F\\u0670\\u0640]", "", text)
+    # Arabic diacritics, dagger alif and tatweel are ignored for comparison only.
+    text = re.sub(r"[ً-ٰٟـ]", "", text)
     text = text.translate(str.maketrans("أإآ", "ااا")).replace("ة", "ه").replace("ى", "ي")
-    text = re.sub(r"[^0-9a-zA-Z\\u0621-\\u064A]", "", text.lower())
+    text = re.sub(r"[^0-9a-zA-Zء-ي]", "", text.lower())
     return text
-
 
 def map_header_columns(headers, ontology: Dict, learned: Dict | None = None,
                        threshold: float = 72):
