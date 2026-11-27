@@ -45,7 +45,7 @@ class ExtendedReportsTests(unittest.TestCase):
         self.assertEqual(len(build_extended_report(self.db, "seating_errors")[1]), 1)
 
     def test_operational_reports(self):
-        self.assertEqual(len(build_extended_report(self.db, "imports")[1]), 1)
+        self.assertEqual(len(build_extended_report(self.db, "imports")[1]), 2)
         self.assertEqual(len(build_extended_report(self.db, "activity")[1]), 1)
         self.assertEqual(len(build_extended_report(self.db, "workbook_learning")[1]), 1)
         self.assertEqual(len(build_extended_report(self.db, "mapping_corrections")[1]), 1)
