@@ -133,23 +133,21 @@ class DynamicExcelProcessor:
                 r_score = ((sum(1 for value in vals if re.search(spec['regex'], str(value).split('\n')[0].strip())) / max(1, len(vals))) * 100.0) if spec.get('regex') and vals else 0.0
                 combined = (h_score * 0.5) + (r_score * 0.5)
                 if combined >= 35.0:
-                    candidates.append((combined, field, col_idx))
+                    candidates.append((combined, field, col_idx, h_score, r_score))
 
-        # A single Excel column must not be assigned to multiple semantic fields.
+        # Explain every assignment and enforce one-to-one field/column mapping.
+        from field_mapping_explainer import explain_assignments
+        self.field_mapping_summary = explain_assignments(candidates, self.all_columns)
         self.classified_fields = {field: -1 for field in ONTOLOGY_RULES}
-        assigned_fields, assigned_columns = set(), set()
         learned_now = []
-        for score, field, col_idx in sorted(candidates, reverse=True):
-            if field in assigned_fields or col_idx in assigned_columns:
-                continue
+        for field, explanation in self.field_mapping_summary["assignments"].items():
+            col_idx = explanation["column_index"]
             self.classified_fields[field] = col_idx
-            assigned_fields.add(field)
-            assigned_columns.add(col_idx)
             # Persist only high-confidence mappings; uncertain guesses are never learned.
-            if score >= 72:
+            if explanation["confidence"] == "high":
                 header_alias = self.all_columns[col_idx]['name']
-                if self.db.remember_semantic_mapping(field, header_alias, score / 100.0):
-                    learned_now.append((field, header_alias, score))
+                if self.db.remember_semantic_mapping(field, header_alias, explanation["score"] / 100.0):
+                    learned_now.append((field, header_alias, explanation["score"]))
 
         self.learning_summary = {
             "learned": len(learned_now),
