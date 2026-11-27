@@ -436,6 +436,8 @@ def load_best_sheet(file_path: str, ontology: Dict, learned: Dict | None = None,
             "merged_ranges_expanded": merged_ranges,
             "column_profiles": profiles,
             "content_hints": find_ambiguous_columns(profiles),
+            "table_candidates": detect_table_candidates(data, ontology, learned),
+            "tables_detected": len(detect_table_candidates(data, ontology, learned)),
         }
         return data, sheet_name, header_row, metadata
     finally:
