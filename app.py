@@ -58,7 +58,16 @@ def get_resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 class SmartMemoryDB:
-    def __init__(self, db_path="forensic_dynamic_ledger.db"):
+    def __init__(self, db_path=None):
+        # Keep learned experience in the user's writable profile, not beside the EXE.
+        if db_path is None:
+            root = os.environ.get("APPDATA")
+            base = os.path.join(root, "StudentLedgerPro") if root else os.path.join(os.path.expanduser("~"), ".studentledgerpro")
+            os.makedirs(base, exist_ok=True)
+            db_path = os.path.join(base, "semantic_learning.sqlite3")
+        else:
+            parent = os.path.dirname(os.path.abspath(db_path))
+            os.makedirs(parent, exist_ok=True)
         self.conn = sqlite3.connect(db_path)
         self.init_db()
 
@@ -78,6 +87,37 @@ class SmartMemoryDB:
         cur = self.conn.cursor()
         cur.execute("SELECT alias, confidence FROM semantic_memory WHERE field_name = ?", (field,))
         return dict(cur.fetchall())
+
+    def learn_semantic_alias(self, field, alias, confidence=0.8):
+        """Learn a column label only after a sufficiently confident assignment."""
+        alias = str(alias or "").strip()
+        if not alias or not field:
+            return False
+        confidence = max(0.0, min(float(confidence), 1.0))
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO semantic_memory
+                    (field_name, alias, confidence, success_count)
+                VALUES (?, ?, ?, 1)
+                ON CONFLICT(field_name, alias) DO UPDATE SET
+                    confidence = (
+                        semantic_memory.confidence * semantic_memory.success_count
+                        + excluded.confidence
+                    ) / (semantic_memory.success_count + 1),
+                    success_count = semantic_memory.success_count + 1
+                """,
+                (str(field), alias, confidence),
+            )
+        return True
+
+    def learning_summary(self):
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*), COALESCE(SUM(success_count), 0) FROM semantic_memory"
+        )
+        aliases, observations = cur.fetchone()
+        return {"learned_aliases": int(aliases), "observations": int(observations)}
 
 EXPLICIT_FEMALE_NAMES = {
     'فاطمة', 'فاطمه', 'سارة', 'ساره', 'مريم', 'ايه', 'آية', 'نورهان', 'رغد', 'شهد',
@@ -159,7 +199,7 @@ class DynamicExcelProcessor:
         for field, spec in ONTOLOGY_RULES.items():
             aliases = self.db.get_semantic_aliases(field)
             known_headers = {normalize_txt(h): 1.0 for h in spec['headers']}
-            known_headers.update(aliases)
+            known_headers.update({normalize_txt(alias): weight for alias, weight in aliases.items()})
             for col in self.all_columns:
                 col_idx = col['idx']
                 col_name = col['norm']
@@ -180,17 +220,27 @@ class DynamicExcelProcessor:
                 ) if pattern and vals else 0.0
                 combined = (h_score * 0.5) + (r_score * 0.5)
                 if combined >= 35.0:
-                    candidates.append((combined, field, col_idx))
+                    candidates.append((combined, field, col_idx, h_score, r_score))
 
         # A single Excel column must not be assigned to multiple semantic fields.
         self.classified_fields = {field: -1 for field in ONTOLOGY_RULES}
         assigned_fields, assigned_columns = set(), set()
-        for score, field, col_idx in sorted(candidates, reverse=True):
+        self.learned_aliases = []
+        for score, field, col_idx, h_score, r_score in sorted(candidates, reverse=True):
             if field in assigned_fields or col_idx in assigned_columns:
                 continue
             self.classified_fields[field] = col_idx
             assigned_fields.add(field)
             assigned_columns.add(col_idx)
+
+            # Conservative online learning: retain only labels backed by a strong
+            # header match or by both header similarity and a strong data pattern.
+            raw_label = str(self._rows[self.header_row][col_idx]).strip()
+            trusted = (h_score >= 90.0) or (h_score >= 60.0 and r_score >= 90.0 and score >= 75.0)
+            if raw_label and trusted:
+                confidence = min(1.0, max(0.0, score / 100.0))
+                if self.db.learn_semantic_alias(field, raw_label, confidence):
+                    self.learned_aliases.append((field, raw_label))
 
         title = ""
         for r in range(min(self.header_row + 1, 10)):
@@ -383,6 +433,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "ملف فارغ", "لم يتم العثور على سجلات طلاب في الملف المحدد.")
                 return
             self.current_data = result
+            learned_count = len(getattr(processor, "learned_aliases", []))
             try:
                 self.student_db.import_students(result.get("students", []), os.path.basename(file_path))
             except Exception as db_exc:
@@ -390,6 +441,12 @@ class MainWindow(QMainWindow):
                                     f"تم تحميل الملف للفحص، لكن تعذر حفظ نسخة البيانات في SQLite:\\n{db_exc}")
             payload = json.dumps(result, ensure_ascii=False).replace("</", "<\\/")
             self.browser.page().runJavaScript(f"loadDynamicDataFromPython({payload});")
+            if learned_count:
+                QMessageBox.information(
+                    self, "تم تحديث التعلم الذكي",
+                    f"تعلم البرنامج {learned_count} تسمية عمود جديدة/مؤكدة من هذا الملف.\\n"
+                    "سيستخدم هذه الخبرة عند استيراد الملفات القادمة."
+                )
         except Exception as exc:
             QMessageBox.critical(self, "تعذر قراءة الملف", f"حدث خطأ أثناء قراءة ملف Excel:\n{exc}")
 
