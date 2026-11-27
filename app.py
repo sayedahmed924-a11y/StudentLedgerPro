@@ -265,6 +265,7 @@ class DynamicExcelProcessor:
 
             students.append({
                 'serial': auto_serial,
+                'sourceRow': r_idx + 1,
                 'cells': row_cells,
                 'name': name_val or f"طالب_{auto_serial}",
                 'code': code_val,
