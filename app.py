@@ -740,11 +740,19 @@ class MainWindow(QMainWindow):
     function updateCards() {{
         if (!globalData) return;
         const students = globalData.students;
-        document.getElementById('cardNidErrCount').innerText = toArabicDigits(students.filter(s => s.hasNidError).length);
-        document.getElementById('cardBiometricCount').innerText = toArabicDigits(students.filter(s => s.hasBiometricError).length);
-        document.getElementById('cardMilitaryCount').innerText = toArabicDigits(students.filter(s => s.hasMilitaryError || s.isCriticalMilitary).length);
-        document.getElementById('cardSeatingGapsCount').innerText = toArabicDigits(students.filter(s => s.hasSeatingError).length);
-        document.getElementById('cardExpatCount').innerText = toArabicDigits(students.filter(s => s.isExpat).length);
+        const counts = { nid: 0, biometric: 0, military: 0, seating: 0, expat: 0 };
+        for (const student of students) {
+            if (student.hasNidError) counts.nid++;
+            if (student.hasBiometricError) counts.biometric++;
+            if (student.hasMilitaryError || student.isCriticalMilitary) counts.military++;
+            if (student.hasSeatingError) counts.seating++;
+            if (student.isExpat) counts.expat++;
+        }
+        document.getElementById('cardNidErrCount').innerText = toArabicDigits(counts.nid);
+        document.getElementById('cardBiometricCount').innerText = toArabicDigits(counts.biometric);
+        document.getElementById('cardMilitaryCount').innerText = toArabicDigits(counts.military);
+        document.getElementById('cardSeatingGapsCount').innerText = toArabicDigits(counts.seating);
+        document.getElementById('cardExpatCount').innerText = toArabicDigits(counts.expat);
         document.getElementById('cardTotalCount').innerText = toArabicDigits(students.length);
         document.getElementById('assistantCardsGrid').style.display = 'grid';
     }}
