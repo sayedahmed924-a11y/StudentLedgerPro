@@ -410,11 +410,17 @@ class MainWindow(QMainWindow):
                         failures.append(f"{os.path.basename(file_path)}: لا توجد سجلات طلاب")
                         continue
                     processors.append(processor)
+                    headers = [column.get("name", "") for column in processor.all_columns]
+                    profile_hints = self.student_db.find_similar_workbook_profiles(
+                        os.path.splitext(file_path)[1], headers
+                    )
                     workbook_results.append({
                         "file": os.path.basename(file_path),
                         "sheet": processor.sheet_name,
                         "students": result.get("students", []),
                         "result": result,
+                        "headers": headers,
+                        "profile_hints": profile_hints,
                     })
                 except Exception as file_exc:
                     failures.append(f"{os.path.basename(file_path)}: {file_exc}")
@@ -442,7 +448,8 @@ class MainWindow(QMainWindow):
                 f"عدد السجلات: {preview['row_count']}\\n"
                 f"مجموعات الربط بين الملفات: {linking['match_group_count']}\\n"
                 f"مجموعات بها تعارضات: {linking['conflict_count']}\\n"
-                f"سجلات تحتاج مراجعة حقول أساسية: {preview['warning_count']}\\n\\n"
+                f"سجلات تحتاج مراجعة حقول أساسية: {preview['warning_count']}\\n"
+                f"أنماط ملفات سابقة متشابهة: {sum(1 for book in workbook_results if book['profile_hints'] and book['profile_hints'][0]['similarity'] >= 0.5)}\\n\\n"
                 "المطابقة تعتمد على كود الطالب أو الرقم القومي بعد توحيد الأرقام.\\n"
                 "لن يتم دمج السجلات أو حذفها تلقائياً.\\n"
             )
@@ -472,15 +479,31 @@ class MainWindow(QMainWindow):
                         self.student_db.log_activity(
                             self.current_user["username"], "IMPORT_BATCH", book["file"]
                         )
+                        self.student_db.remember_workbook_profile(
+                            os.path.splitext(book["file"])[1], book["sheet"], book["headers"]
+                        )
                         imported += len(batch)
                 except Exception as db_exc:
                     import_errors.append(f"{book['file']}: {db_exc}")
 
+            learned_relationships = 0
+            for group in linking["match_groups"]:
+                sheet_names = sorted({source["sheet"] for source in group["sources"] if source["sheet"]})
+                for left_index in range(len(sheet_names)):
+                    for right_index in range(left_index + 1, len(sheet_names)):
+                        if self.student_db.remember_confirmed_relationship(
+                            sheet_names[left_index], sheet_names[right_index]
+                        ):
+                            learned_relationships += 1
+            memory_stats = self.student_db.workbook_learning_stats()
             summary = (
                 f"الملفات المقروءة: {len(workbook_results)}\\n"
                 f"السجلات التي تم إرسالها للحفظ: {imported}\\n"
                 f"مجموعات المطابقة: {linking['match_group_count']}\\n"
                 f"التعارضات التي تحتاج مراجعة: {linking['conflict_count']}\\n"
+                f"علاقات الأوراق التي تم تأكيدها: {learned_relationships}\\n"
+                f"أنماط الملفات المحفوظة: {memory_stats['profiles']}\\n"
+                f"تأكيدات الاستيراد المتراكمة: {memory_stats['confirmations']}\\n"
                 f"ملفات تعذر حفظها: {len(import_errors)}"
             )
             if import_errors:
