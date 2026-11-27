@@ -13,14 +13,15 @@ import datetime
 import base64
 import hashlib
 import ctypes
+import tempfile
 import pandas as pd
 from rapidfuzz import fuzz
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QMessageBox
 )
-from PyQt6.QtCore import Qt, QObject, pyqtSlot
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import Qt, QObject, pyqtSlot, QUrl
+from PyQt6.QtGui import QIcon, QDesktopServices
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
 
@@ -288,7 +289,7 @@ class PythonBridge(QObject):
 
     @pyqtSlot()
     def requestPrint(self):
-        self.win.print_pdf()
+        self.win.print_in_browser()
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -337,11 +338,35 @@ class MainWindow(QMainWindow):
         pd.DataFrame(rows, columns=cols).to_excel(path, index=False)
         QMessageBox.information(self, "تم التصدير", "تم تصدير ملف الإكسيل بنجاح!")
 
-    def print_pdf(self):
-        path, _ = QFileDialog.getSaveFileName(self, "تصدير السجل كملف PDF رسمي", "StudentLedger_A4.pdf", "PDF Files (*.pdf)")
-        if not path: return
-        self.browser.page().printToPdf(path)
-        QMessageBox.information(self, "تم الحفظ", "تم إصدار ملف PDF دفتري متقابل ومجهز للطباعة المزدوجة!")
+    def print_in_browser(self):
+        """فتح نسخة الطباعة في المتصفح الافتراضي واستخدام نافذة الطباعة المعتادة."""
+        self.browser.page().toHtml(self._open_print_html)
+
+    def _open_print_html(self, html):
+        # نحفظ نسخة HTML من العرض الحالي؛ لا ننشئ PDF ولا نستخدم printToPdf.
+        # نحذف سكربتات واجهة التطبيق لأن الصفحة المفتوحة خارج Qt لا تحتاج إلى WebChannel.
+        printable_html = re.sub(r'<script\\b[^>]*>.*?</script>', '', html, flags=re.IGNORECASE | re.DOTALL)
+        auto_print = '''<script>
+window.addEventListener('load', function () {
+    setTimeout(function () { window.print(); }, 600);
+});
+</script>'''
+        if '</body>' in printable_html.lower():
+            match = re.search(r'</body>', printable_html, flags=re.IGNORECASE)
+            printable_html = printable_html[:match.start()] + auto_print + printable_html[match.start():]
+        else:
+            printable_html += auto_print
+
+        temp = tempfile.NamedTemporaryFile(
+            mode='w', encoding='utf-8', suffix='.html',
+            prefix='StudentLedgerPro_Print_', delete=False
+        )
+        try:
+            with temp:
+                temp.write(printable_html)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(temp.name))
+        except Exception as exc:
+            QMessageBox.critical(self, "خطأ في الطباعة", f"تعذر فتح صفحة الطباعة في المتصفح: {exc}")
 
     def get_html(self):
         return f"""
@@ -440,7 +465,7 @@ class MainWindow(QMainWindow):
     </div>
     <div class="actions-bar">
         <div>
-            <button class="btn btn-success" id="btnPrint" onclick="pyBridge.requestPrint()" disabled><span>🖨️</span> طباعة / تصدير PDF</button>
+            <button class="btn btn-success" id="btnPrint" onclick="pyBridge.requestPrint()" disabled><span>🖨️</span> طباعة</button>
             <button class="btn btn-primary" id="btnExportExcel" onclick="pyBridge.requestExportExcel('')" disabled><span>📊</span> تصدير إكسيل مُنظف</button>
         </div>
     </div>
@@ -541,6 +566,10 @@ class MainWindow(QMainWindow):
 
         for (let rChunk = 0; rChunk < totalRowChunks; rChunk++) {{
             const studentSlice = filtered.slice(rChunk * rowsPerPage, (rChunk + 1) * rowsPerPage);
+            // نحسب الرقم مرة واحدة لكل طالب قبل تقسيم الأعمدة؛ لذلك يظل مطابقاً في كل جزء أفقي.
+            const serialNumbers = studentSlice.map((student, idx) =>
+                serialMode === 'smart_continuous' ? (rChunk * rowsPerPage) + idx + 1 : idx + 1
+            );
             for (let cChunk = 0; cChunk < totalColChunks; cChunk++) {{
                 const colSlice = allColumns.slice(cChunk * colsPerPage, (cChunk + 1) * colsPerPage);
                 const colStartIndex = cChunk * colsPerPage;
@@ -564,7 +593,7 @@ class MainWindow(QMainWindow):
 
                 let tbodyHtml = `<tbody>`;
                 studentSlice.forEach((s, idx) => {{
-                    let serialNum = (serialMode === 'smart_continuous') ? ((rChunk * rowsPerPage) + idx + 1) : (idx + 1);
+                    const serialNum = serialNumbers[idx];
                     const badge = (s.errorNotes && s.errorNotes.length > 0 && cChunk === 0) ? `<span class="screen-error-badge">⚠️</span>` : '';
                     tbodyHtml += `<tr><td style="font-weight:bold;">${{toArabicDigits(serialNum)}}</td>`;
 
