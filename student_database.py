@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import hashlib
+import hmac
+import secrets
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -75,6 +78,94 @@ class StudentDatabase:
                     imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS app_users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    password_hash TEXT NOT NULL,
+                    password_salt TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('admin', 'editor', 'viewer')),
+                    active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS activity_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    details TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+
+    @staticmethod
+    def _password_digest(password: str, salt: str) -> str:
+        return hashlib.pbkdf2_hmac(
+            "sha256", password.encode("utf-8"), bytes.fromhex(salt), 240000
+        ).hex()
+
+    def user_count(self) -> int:
+        with self._connection() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM app_users").fetchone()[0])
+
+    def create_user(self, username: str, password: str, role: str = "viewer") -> int:
+        username = str(username).strip()
+        if len(username) < 3:
+            raise ValueError("اسم المستخدم يجب ألا يقل عن 3 أحرف.")
+        if len(password) < 8:
+            raise ValueError("كلمة المرور يجب ألا تقل عن 8 أحرف.")
+        if role not in ("admin", "editor", "viewer"):
+            raise ValueError("نوع الصلاحية غير صحيح.")
+        salt = secrets.token_hex(16)
+        digest = self._password_digest(password, salt)
+        with self._connection() as conn:
+            cur = conn.execute(
+                "INSERT INTO app_users(username,password_hash,password_salt,role) VALUES(?,?,?,?)",
+                (username, digest, salt, role),
+            )
+            return int(cur.lastrowid)
+
+    def authenticate(self, username: str, password: str):
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT id,username,password_hash,password_salt,role FROM app_users "
+                "WHERE username=? COLLATE NOCASE AND active=1",
+                (str(username).strip(),),
+            ).fetchone()
+        if not row:
+            return None
+        candidate = self._password_digest(password, row["password_salt"])
+        if not hmac.compare_digest(candidate, row["password_hash"]):
+            return None
+        return {"id": row["id"], "username": row["username"], "role": row["role"]}
+
+    def list_users(self):
+        with self._connection() as conn:
+            return [dict(r) for r in conn.execute(
+                "SELECT id,username,role,active,created_at FROM app_users ORDER BY username"
+            ).fetchall()]
+
+    def set_user_active(self, user_id: int, active: bool) -> bool:
+        with self._connection() as conn:
+            cur = conn.execute("UPDATE app_users SET active=? WHERE id=?",
+                               (int(bool(active)), int(user_id)))
+            return cur.rowcount > 0
+
+    def log_activity(self, username: str, action: str, details: str = ""):
+        with self._connection() as conn:
+            conn.execute(
+                "INSERT INTO activity_log(username,action,details) VALUES(?,?,?)",
+                (username, action, details),
+            )
+
+    def recent_activity(self, limit: int = 200):
+        with self._connection() as conn:
+            return [dict(r) for r in conn.execute(
+                "SELECT username,action,details,created_at FROM activity_log "
+                "ORDER BY id DESC LIMIT ?", (max(1, min(int(limit), 1000)),)
+            ).fetchall()]
 
     @staticmethod
     def _student_values(student: dict[str, Any], source_file: str = ""):
