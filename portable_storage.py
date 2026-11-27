@@ -49,7 +49,6 @@ def resolve_database_path(
             with sqlite3.connect(str(legacy), timeout=30) as source:
                 with sqlite3.connect(str(temp_path), timeout=30) as destination:
                     source.backup(destination)
-                    destination.execute("PRAGMA integrity_check")
                     result = destination.execute("PRAGMA integrity_check").fetchone()
                     if not result or result[0] != "ok":
                         raise sqlite3.DatabaseError("فشل التحقق من سلامة قاعدة البيانات بعد النسخ.")
